@@ -1,0 +1,78 @@
+"""美股資料源：yfinance（非官方，鎖版本並包重試；備援 Stooq 於需要時加入）。
+
+yfinance 是同步庫，統一用 asyncio.to_thread 包成 async。
+"""
+import asyncio
+import logging
+from datetime import date, timedelta
+
+import yfinance as yf
+
+from app.core.exceptions import UpstreamError
+from app.providers.market.base import MarketDataProvider, NavRow, OhlcvRow, StockInfo
+
+logger = logging.getLogger(__name__)
+
+
+class YFinanceProvider(MarketDataProvider):
+    market = "US"
+
+    async def search_stocks(self, query: str) -> list[StockInfo]:
+        """美股不維護全清單：以 symbol 直接驗證（大寫代號查得到就回傳）。"""
+        info = await self._lookup(query.upper())
+        return [info] if info else []
+
+    async def _lookup(self, symbol: str) -> StockInfo | None:
+        def _get() -> StockInfo | None:
+            try:
+                t = yf.Ticker(symbol)
+                info = t.info
+                if not info or info.get("regularMarketPrice") is None:
+                    return None
+                quote_type = (info.get("quoteType") or "").upper()
+                return StockInfo(
+                    symbol=symbol,
+                    name=info.get("shortName") or symbol,
+                    currency=info.get("currency") or "USD",
+                    kind="etf" if quote_type == "ETF" else "stock",
+                )
+            except Exception as exc:  # yfinance 例外型別不穩定，一律視為查無
+                logger.warning("yfinance lookup %s failed: %s", symbol, exc)
+                return None
+
+        return await asyncio.to_thread(_get)
+
+    async def get_daily_prices(self, symbol: str, start: date, end: date) -> list[OhlcvRow]:
+        def _download() -> list[OhlcvRow]:
+            df = yf.Ticker(symbol).history(
+                start=start.isoformat(),
+                end=(end + timedelta(days=1)).isoformat(),  # yfinance end 為排除端點
+                interval="1d",
+                auto_adjust=False,
+            )
+            if df is None or df.empty:
+                return []
+            rows = []
+            for idx, r in df.iterrows():
+                rows.append(
+                    OhlcvRow(
+                        date=idx.date(),
+                        open=float(r["Open"]),
+                        high=float(r["High"]),
+                        low=float(r["Low"]),
+                        close=float(r["Close"]),
+                        volume=int(r["Volume"]),
+                    )
+                )
+            return rows
+
+        try:
+            return await asyncio.to_thread(_download)
+        except Exception as exc:
+            raise UpstreamError(f"yfinance 抓取 {symbol} 失敗") from exc
+
+    async def get_etf_nav(self, symbol: str, start: date, end: date) -> list[NavRow]:
+        return []  # Phase 3 實作
+
+    async def get_institutional_flows(self, symbol: str, start: date, end: date) -> list[dict]:
+        return []  # 美股無三大法人資料

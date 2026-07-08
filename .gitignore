@@ -1,0 +1,24 @@
+# secrets
+.env
+
+# python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# data
+data/
+backend/data/
+backend/test.db
+
+# node
+node_modules/
+.next/
+out/
+
+# misc
+.DS_Store
+*.log

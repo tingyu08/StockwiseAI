@@ -1,0 +1,19 @@
+# 各模型免費層額度 — 依 Google AI Studio 儀表板實際顯示維護，不寫死在程式。
+# 最後核對日期：2026-07-08
+models:
+  gemini-3.1-flash-lite:
+    rpm: 15
+    rpd: 500
+    tpm: 250000
+  gemini-3.5-flash:
+    rpm: 5
+    rpd: 20
+    tpm: 250000
+  gemma-4-31b-it:
+    rpm: 30
+    rpd: 1500
+    tpm: 250000
+  antigravity-preview-05-2026:
+    rpm: 60
+    rpd: 100
+    tpm: 100000
