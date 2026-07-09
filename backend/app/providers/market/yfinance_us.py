@@ -1,4 +1,4 @@
-"""美股資料源：yfinance（非官方，鎖版本並包重試；備援 Stooq 於需要時加入）。
+"""美股資料源：yfinance 主源＋FinMind 備援（Yahoo 對機房 IP 常限流）。
 
 yfinance 是同步庫，統一用 asyncio.to_thread 包成 async。
 """
@@ -9,6 +9,7 @@ from datetime import date, timedelta
 import yfinance as yf
 
 from app.core.exceptions import UpstreamError
+from app.providers.market import finmind_us
 from app.providers.market.base import MarketDataProvider, NavRow, OhlcvRow, StockInfo
 
 logger = logging.getLogger(__name__)
@@ -66,10 +67,28 @@ class YFinanceProvider(MarketDataProvider):
                 )
             return rows
 
+        def _download_finmind() -> list[OhlcvRow]:
+            df = finmind_us.fetch_daily(symbol, start=start, end=end)
+            return [
+                OhlcvRow(
+                    date=r["Date"].date(),
+                    open=float(r["Open"]),
+                    high=float(r["High"]),
+                    low=float(r["Low"]),
+                    close=float(r["Close"]),
+                    volume=int(r["Volume"]),
+                )
+                for _, r in df.iterrows()
+            ]
+
         try:
             return await asyncio.to_thread(_download)
         except Exception as exc:
-            raise UpstreamError(f"yfinance 抓取 {symbol} 失敗") from exc
+            logger.warning("yfinance 抓取 %s 失敗（%s），改用 FinMind", symbol, exc)
+            try:
+                return await asyncio.to_thread(_download_finmind)
+            except Exception as fallback_exc:
+                raise UpstreamError(f"yfinance 與 FinMind 抓取 {symbol} 皆失敗") from fallback_exc
 
     async def get_etf_nav(self, symbol: str, start: date, end: date) -> list[NavRow]:
         return []  # Phase 3 實作
