@@ -5,7 +5,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import (
-    analysis, compare, health, jobs, predictions, premium, simulation, stocks, usage, watchlist,
+    alerts, analysis, backtest, compare, health, jobs, predictions, premium,
+    simulation, stocks, usage, watchlist,
 )
 from app.core.config import get_settings
 from app.core.exceptions import register_exception_handlers
@@ -40,7 +41,7 @@ def create_app() -> FastAPI:
     for router in (
         health.router, usage.router, stocks.router, watchlist.router,
         jobs.router, analysis.router, compare.router, premium.router, predictions.router,
-        simulation.router,
+        simulation.router, alerts.router, backtest.router,
     ):
         app.include_router(router, prefix="/api/v1")
     return app

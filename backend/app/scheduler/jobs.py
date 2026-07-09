@@ -93,6 +93,17 @@ async def nav_snapshot_daily(market: str) -> dict:
         db.close()
 
 
+async def alert_check_daily(market: str) -> dict:
+    """價格/折溢價警示檢查（於同步與淨值快照之後）。"""
+    from app.services.alert_service import check_alerts
+
+    db = SessionLocal()
+    try:
+        return check_alerts(db, market)
+    finally:
+        db.close()
+
+
 JOBS = {
     "sync-tw": lambda: sync_market_daily("TW"),
     "sync-us": lambda: sync_market_daily("US"),
@@ -104,6 +115,8 @@ JOBS = {
     "sim-decide-us": lambda: sim_decide_daily("US"),
     "sim-fill-tw": lambda: sim_fill_daily("TW"),
     "sim-fill-us": lambda: sim_fill_daily("US"),
+    "alerts-tw": lambda: alert_check_daily("TW"),
+    "alerts-us": lambda: alert_check_daily("US"),
 }
 
 
@@ -113,12 +126,14 @@ def start_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(sync_market_daily, CronTrigger(hour=14, minute=30, timezone=TZ), args=["TW"])
     scheduler.add_job(sim_fill_daily, CronTrigger(hour=14, minute=35, timezone=TZ), args=["TW"])
     scheduler.add_job(nav_snapshot_daily, CronTrigger(hour=14, minute=45, timezone=TZ), args=["TW"])
+    scheduler.add_job(alert_check_daily, CronTrigger(hour=14, minute=50, timezone=TZ), args=["TW"])
     scheduler.add_job(ai_batch_daily, CronTrigger(hour=15, minute=0, timezone=TZ), args=["TW"])
     scheduler.add_job(sim_decide_daily, CronTrigger(hour=15, minute=15, timezone=TZ), args=["TW"])
     # 美股（台灣時間清晨）：同樣序列
     scheduler.add_job(sync_market_daily, CronTrigger(hour=5, minute=30, timezone=TZ), args=["US"])
     scheduler.add_job(sim_fill_daily, CronTrigger(hour=5, minute=35, timezone=TZ), args=["US"])
     scheduler.add_job(nav_snapshot_daily, CronTrigger(hour=5, minute=45, timezone=TZ), args=["US"])
+    scheduler.add_job(alert_check_daily, CronTrigger(hour=5, minute=50, timezone=TZ), args=["US"])
     scheduler.add_job(ai_batch_daily, CronTrigger(hour=6, minute=0, timezone=TZ), args=["US"])
     scheduler.add_job(sim_decide_daily, CronTrigger(hour=6, minute=15, timezone=TZ), args=["US"])
     scheduler.start()
