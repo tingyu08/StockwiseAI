@@ -47,6 +47,16 @@ export function useCreateGroup() {
   });
 }
 
+export function useRenameGroup() {
+  const market = useMarketStore((s) => s.market);
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: number; name: string }) =>
+      post(`/groups/${id}`, "PATCH", { name }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["groups", market] }),
+  });
+}
+
 export function useDeleteGroup() {
   const market = useMarketStore((s) => s.market);
   const qc = useQueryClient();

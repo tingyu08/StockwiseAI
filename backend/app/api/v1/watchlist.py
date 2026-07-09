@@ -70,6 +70,31 @@ async def create_group(body: GroupBody, db: Session = Depends(get_db)) -> Envelo
     return ok({"id": group.id, "name": group.name})
 
 
+class RenameGroupBody(BaseModel):
+    name: str = Field(min_length=1, max_length=32)
+
+
+@router.patch("/groups/{group_id}", response_model=Envelope)
+async def rename_group(
+    group_id: int, body: RenameGroupBody, db: Session = Depends(get_db)
+) -> Envelope:
+    group = db.get(WatchGroup, group_id)
+    if group is None:
+        raise NotFoundError("查無此群組")
+    dup = db.execute(
+        select(WatchGroup).where(
+            WatchGroup.market == group.market,
+            WatchGroup.name == body.name,
+            WatchGroup.id != group_id,
+        )
+    ).scalar_one_or_none()
+    if dup:
+        raise ConflictError(f"群組「{body.name}」已存在")
+    group.name = body.name
+    db.commit()
+    return ok({"id": group.id, "name": group.name})
+
+
 @router.delete("/groups/{group_id}", response_model=Envelope)
 async def delete_group(group_id: int, db: Session = Depends(get_db)) -> Envelope:
     group = db.get(WatchGroup, group_id)
