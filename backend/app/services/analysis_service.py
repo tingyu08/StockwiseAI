@@ -1,9 +1,13 @@
 """AI 分析管線：輸入組裝 → 當日快取檢查 → AI → 落地。"""
+import asyncio
 import json
 import logging
+from collections.abc import Sequence
 from datetime import date, timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError
@@ -13,7 +17,13 @@ from app.providers.ai.base import AnalysisContext
 from app.providers.ai.gemini import PROMPT_VERSION
 from app.providers.market.registry import get_provider
 
+if TYPE_CHECKING:
+    from app.models import AiOverview
+
 logger = logging.getLogger(__name__)
+
+# 同市場的總評一次只允許一個請求重跑，避免連按時重複扣 AI 額度
+_overview_locks: dict[str, asyncio.Lock] = {}
 
 
 def latest_report(db: Session, stock: Stock, kinds: tuple[str, ...] = ("deep", "routine")) -> AiReport | None:
@@ -88,12 +98,12 @@ async def build_context(db: Session, stock: Stock) -> AnalysisContext:
     )
 
 
-async def run_batch(db: Session, stocks: list[Stock], kind: str = "routine") -> dict:
+async def run_batch(db: Session, stocks: Sequence[Stock], kind: str = "routine") -> dict:
     """批次分析（每批 ≤8 檔）。已有當日報告的股票自動跳過（快取）。"""
     trade_dates = {s.id: _last_trade_date(db, s) for s in stocks}
     pending = [
         s for s in stocks
-        if trade_dates[s.id] and not _report_exists(db, s.id, trade_dates[s.id], kind)
+        if (td := trade_dates[s.id]) is not None and not _report_exists(db, s.id, td, kind)
     ]
     if not pending:
         return {"analyzed": 0, "skipped": len(stocks), "model": None}
@@ -107,6 +117,7 @@ async def run_batch(db: Session, stocks: list[Stock], kind: str = "routine") -> 
         # 模型偶爾把 symbol 回成 'TW/2330' 或含名稱 → 正規化後比對；
         # 數量一致時再以順序比對兜底（批次 prompt 要求依序回傳）
         by_symbol = {_norm_symbol(r.symbol): r for r in result.reports}
+        rows: list[dict] = []
         for idx, stock in enumerate(batch):
             report = by_symbol.get(_norm_symbol(stock.symbol))
             if report is None and len(result.reports) == len(batch):
@@ -115,8 +126,8 @@ async def run_batch(db: Session, stocks: list[Stock], kind: str = "routine") -> 
             if report is None:
                 logger.warning("批次回應缺少 %s，跳過", stock.symbol)
                 continue
-            db.add(
-                AiReport(
+            rows.append(
+                dict(
                     stock_id=stock.id,
                     trade_date=trade_dates[stock.id],
                     provider="gemini",
@@ -128,9 +139,29 @@ async def run_batch(db: Session, stocks: list[Stock], kind: str = "routine") -> 
                     payload_json=report.model_dump_json(),
                 )
             )
-            analyzed += 1
-        db.commit()
+        analyzed += _insert_reports(db, rows)
     return {"analyzed": analyzed, "skipped": len(stocks) - len(pending), "model": model_used}
+
+
+def _insert_reports(db: Session, rows: list[dict]) -> int:
+    """整批落地；撞 UNIQUE（並發請求已寫入同日報告）時逐筆重試，已存在的視為快取命中。"""
+    db.add_all([AiReport(**row) for row in rows])
+    try:
+        db.commit()
+        return len(rows)
+    except IntegrityError:
+        db.rollback()
+    inserted = 0
+    for row in rows:
+        if _report_exists(db, row["stock_id"], row["trade_date"], row["kind"]):
+            continue
+        db.add(AiReport(**row))
+        try:
+            db.commit()
+            inserted += 1
+        except IntegrityError:
+            db.rollback()
+    return inserted
 
 
 async def run_deep(db: Session, stock: Stock) -> AiReport:
@@ -162,13 +193,33 @@ async def run_deep(db: Session, stock: Stock) -> AiReport:
         payload_json=report.model_dump_json(),
     )
     db.add(row)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # 並發請求已寫入同一份（stock_id, trade_date, deep）→ 視為快取命中
+        db.rollback()
+        return db.execute(
+            select(AiReport).where(
+                AiReport.stock_id == stock.id,
+                AiReport.trade_date == trade_date,
+                AiReport.kind == "deep",
+            )
+        ).scalar_one()
     db.refresh(row)
     return row
 
 
 async def run_overview(db: Session, market: str) -> "AiOverview":
-    """一鍵：全部自選批次分析（快取）→ 四模組每日簡報（當日快取）。"""
+    """一鍵：全部自選批次分析（快取）→ 四模組每日簡報（當日快取）。
+
+    同市場以 asyncio.Lock 序列化：連按時第二個請求等第一個完成後直接命中快取。
+    """
+    lock = _overview_locks.setdefault(market, asyncio.Lock())
+    async with lock:
+        return await _run_overview(db, market)
+
+
+async def _run_overview(db: Session, market: str) -> "AiOverview":
     from app.models import AiOverview, WatchlistItem
 
     stocks = db.execute(
@@ -240,7 +291,16 @@ async def run_overview(db: Session, market: str) -> "AiOverview":
         payload_json=result.model_dump_json(),
     )
     db.add(overview)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # 撞 UNIQUE(market, trade_date)（例如多進程部署時鎖不跨進程）→ 回傳既有總評
+        db.rollback()
+        return db.execute(
+            select(AiOverview).where(
+                AiOverview.market == market, AiOverview.trade_date == trade_date
+            )
+        ).scalar_one()
     db.refresh(overview)
     return overview
 
@@ -252,9 +312,10 @@ def _yesterday_change(db: Session, stock: Stock) -> str:
         .order_by(DailyPrice.date.desc())
         .limit(2)
     ).scalars().all()
-    if len(rows) < 2:
+    closes = [float(r.close) for r in rows if r.close is not None]
+    if len(closes) < 2:
         return "昨日資料不足"
-    last, prev = float(rows[0].close), float(rows[1].close)
+    last, prev = closes
     return f"收盤 {last}（{(last - prev) / prev * 100:+.2f}%）"
 
 
