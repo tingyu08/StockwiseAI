@@ -3,7 +3,7 @@
 額度數字來自 quotas.yaml；當日已用數來自 ai_usage_log 表，
 重啟不會歸零、多進程也一致。
 """
-from datetime import date
+from datetime import date, datetime, time, timedelta
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
@@ -14,11 +14,15 @@ from app.models.analysis import AiUsageLog
 
 
 def used_today(db: Session, model: str) -> int:
+    # 用時間範圍而非 func.date()==字串：Postgres 強型別不接受 date=varchar，
+    # 且範圍查詢吃得到 created_at 索引（SQLite/PG 皆可）
+    start = datetime.combine(date.today(), time.min)
     stmt = (
         select(func.count())
         .select_from(AiUsageLog)
         .where(AiUsageLog.model == model)
-        .where(func.date(AiUsageLog.created_at) == date.today().isoformat())
+        .where(AiUsageLog.created_at >= start)
+        .where(AiUsageLog.created_at < start + timedelta(days=1))
     )
     return db.execute(stmt).scalar_one()
 
