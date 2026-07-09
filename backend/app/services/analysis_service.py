@@ -77,11 +77,14 @@ async def build_context(db: Session, stock: Stock) -> AnalysisContext:
     if stock.market == "TW":
         flow_summary = await _tw_flow_summary(stock)
 
+    from app.services.news_service import latest_news_summary
+
     return AnalysisContext(
         symbol=stock.symbol,
         market=stock.market,
         price_summary="\n".join(lines),
         flow_summary=flow_summary,
+        news_summary=latest_news_summary(db, stock),
     )
 
 

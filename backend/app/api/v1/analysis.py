@@ -89,3 +89,33 @@ async def run_deep(
     stock = _get_stock(db, market, symbol)
     report = await analysis_service.run_deep(db, stock)
     return ok(analysis_service.report_dto(report))
+
+
+@router.get("/stocks/{symbol}/news", response_model=Envelope)
+async def get_news(
+    symbol: str,
+    market: Literal["TW", "US"] = Query(...),
+    db: Session = Depends(get_db),
+) -> Envelope:
+    """最近一次新聞面研究摘要（超過保鮮期則 404）。"""
+    from app.services import news_service
+
+    stock = _get_stock(db, market, symbol)
+    report = news_service.latest_news_report(db, stock)
+    if report is None:
+        raise NotFoundError("尚無近期新聞研究，可點「搜尋新聞」產生")
+    return ok(news_service.news_dto(report))
+
+
+@router.post("/stocks/{symbol}/news:run", response_model=Envelope)
+async def run_news(
+    symbol: str,
+    market: Literal["TW", "US"] = Query(...),
+    db: Session = Depends(get_db),
+) -> Envelope:
+    """觸發 Antigravity 新聞研究（當日快取；agent 任務需 1~3 分鐘）。"""
+    from app.services import news_service
+
+    stock = _get_stock(db, market, symbol)
+    report = await news_service.run_news_research(db, stock)
+    return ok(news_service.news_dto(report))

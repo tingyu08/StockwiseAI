@@ -2,6 +2,7 @@
 
 import { use, useState } from "react";
 
+import { NewsCard } from "@/components/analysis/news-card";
 import { ReportCard } from "@/components/analysis/report-card";
 import { CandlestickChart } from "@/components/charts/candlestick";
 import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
@@ -90,6 +91,7 @@ export default function StockPage({
       )}
 
       <ReportCard symbol={symbol} />
+      <NewsCard symbol={symbol} />
     </div>
   );
 }

@@ -25,7 +25,7 @@ logger = logging.getLogger(__name__)
 BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 PROMPT_VERSION = "v1"
 
-SYSTEM_PROMPT = """你是一位嚴謹的量化股票分析師。根據提供的技術面與籌碼面資料產出分析。
+SYSTEM_PROMPT = """你是一位嚴謹的量化股票分析師。根據提供的技術面、籌碼面與新聞面資料產出分析。
 規則：
 - 只根據提供的資料判斷，不虛構資訊
 - confidence 反映訊號一致性：多指標同向才給高值，訊號矛盾給低值

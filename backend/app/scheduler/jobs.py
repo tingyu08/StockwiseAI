@@ -60,6 +60,38 @@ async def ai_batch_daily(market: str) -> dict:
         db.close()  # Neon 紀律：job 結束即釋放連線
 
 
+async def news_research_daily(market: str) -> dict:
+    """AI 託管清單的每日新聞研究（Antigravity），於例行批次分析前執行。
+
+    單檔失敗不中斷（agent 任務較不穩定）；額度盡即提前收工，
+    已完成的摘要仍會被當日批次分析吃到。
+    """
+    from app.core.exceptions import QuotaExceededError
+    from app.services.news_service import run_news_research
+
+    db = SessionLocal()
+    researched, failed = 0, []
+    try:
+        stocks = db.execute(
+            select(Stock)
+            .join(WatchlistItem, WatchlistItem.stock_id == Stock.id)
+            .where(Stock.market == market, WatchlistItem.ai_managed.is_(True))
+        ).scalars().all()
+        for stock in stocks:
+            try:
+                await run_news_research(db, stock)
+                researched += 1
+            except QuotaExceededError:
+                logger.warning("Antigravity 額度已盡，%s 新聞研究提前結束", market)
+                break
+            except Exception:
+                logger.exception("news research %s/%s failed", market, stock.symbol)
+                failed.append(stock.symbol)
+        return {"market": market, "researched": researched, "failed": failed}
+    finally:
+        db.close()  # Neon 紀律：job 結束即釋放連線
+
+
 async def sim_decide_daily(market: str) -> dict:
     """AI 批次分析後，依報告產生模擬委託單（隔日開盤成交）。"""
     from app.services.sim.decision import run_decisions
@@ -107,6 +139,8 @@ async def alert_check_daily(market: str) -> dict:
 JOBS = {
     "sync-tw": lambda: sync_market_daily("TW"),
     "sync-us": lambda: sync_market_daily("US"),
+    "news-tw": lambda: news_research_daily("TW"),
+    "news-us": lambda: news_research_daily("US"),
     "ai-batch-tw": lambda: ai_batch_daily("TW"),
     "ai-batch-us": lambda: ai_batch_daily("US"),
     "nav-tw": lambda: nav_snapshot_daily("TW"),
@@ -122,14 +156,17 @@ JOBS = {
 
 def start_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=TZ)
-    # 台股：14:30 同步 → 14:35 撮合昨日委託 → 14:45 淨值 → 15:00 AI 批次 → 15:15 產生委託
+    # 台股：13:40 新聞研究（不依賴行情，先跑）→ 14:30 同步 → 14:35 撮合昨日委託
+    #       → 14:45 淨值 → 15:00 AI 批次（含新聞面）→ 15:15 產生委託
+    scheduler.add_job(news_research_daily, CronTrigger(hour=13, minute=40, timezone=TZ), args=["TW"])
     scheduler.add_job(sync_market_daily, CronTrigger(hour=14, minute=30, timezone=TZ), args=["TW"])
     scheduler.add_job(sim_fill_daily, CronTrigger(hour=14, minute=35, timezone=TZ), args=["TW"])
     scheduler.add_job(nav_snapshot_daily, CronTrigger(hour=14, minute=45, timezone=TZ), args=["TW"])
     scheduler.add_job(alert_check_daily, CronTrigger(hour=14, minute=50, timezone=TZ), args=["TW"])
     scheduler.add_job(ai_batch_daily, CronTrigger(hour=15, minute=0, timezone=TZ), args=["TW"])
     scheduler.add_job(sim_decide_daily, CronTrigger(hour=15, minute=15, timezone=TZ), args=["TW"])
-    # 美股（台灣時間清晨）：同樣序列
+    # 美股（台灣時間清晨）：同樣序列，新聞研究 04:40 先跑
+    scheduler.add_job(news_research_daily, CronTrigger(hour=4, minute=40, timezone=TZ), args=["US"])
     scheduler.add_job(sync_market_daily, CronTrigger(hour=5, minute=30, timezone=TZ), args=["US"])
     scheduler.add_job(sim_fill_daily, CronTrigger(hour=5, minute=35, timezone=TZ), args=["US"])
     scheduler.add_job(nav_snapshot_daily, CronTrigger(hour=5, minute=45, timezone=TZ), args=["US"])

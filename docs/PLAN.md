@@ -239,6 +239,16 @@ watchlists       自選股清單
 - [ ] backtesting.py 整合、策略績效報告
 - [ ] 價格/折溢價警示通知
 
+### Phase 6：新聞面研究（P2）→ §4.0 Antigravity 分工（2026-07-09 完成）
+- [x] `AntigravityProvider`（Interactions API：background 建立＋輪詢，quota 檢查與用量記錄）
+- [x] `news_service`：每檔每日曆日一次（快取入 `ai_reports` kind='news'），保鮮期 4 天
+- [x] `build_context` 注入 `news_summary` → 例行批次/深度分析自動吃到新聞面
+- [x] 排程：台股 13:40、美股 04:40（批次分析前；額度盡提前收工）
+- [x] API：`GET/POST /stocks/{symbol}/news[:run]`
+- 實測備註：background interaction 的 GET 回應**沒有頂層 `output_text`**，最終回覆在
+  `steps[]` 最後一個 `type='model_output'` 的 `content[].text`；用量欄位為
+  `usage.total_input_tokens`/`total_output_tokens`（字串型）。
+
 **每個 Phase 完成後**：跑 code review + 補測試（目標 80% 覆蓋率：指標計算、撮合引擎、折溢價計算為重點單元測試對象）。
 
 ---
