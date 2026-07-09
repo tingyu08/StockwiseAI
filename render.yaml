@@ -1,0 +1,28 @@
+# Render Blueprint — 方案 B 後端（docs/SD.md §6.2）
+# 免費層限制：15 分鐘無流量休眠（GH Actions cron 觸發時順便喚醒）、
+# LB 約 100 秒切斷回應（長任務走 jobs API 的 background 模式）、
+# 無 preDeployCommand → migration 併入 startCommand。
+services:
+  - type: web
+    name: stockwise-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install .
+    startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: SCHEDULER_MODE
+        value: external          # 排程一律由 GitHub Actions cron 觸發
+      - key: DATABASE_URL
+        sync: false              # Neon 連線字串，於 dashboard 填入
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: FINMIND_TOKEN
+        sync: false
+      - key: JOB_TOKEN
+        generateValue: true      # Render 自動產生；複製到 GitHub secrets
+      - key: CORS_ORIGINS
+        sync: false              # Vercel 網域，如 https://stockwise.vercel.app
