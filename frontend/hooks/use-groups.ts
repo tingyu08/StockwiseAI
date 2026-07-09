@@ -93,17 +93,44 @@ export function useSetGroup() {
   });
 }
 
+export interface DailyBriefing {
+  global_market: {
+    index_comments: string[];
+    key_stocks_comment: string;
+    risk_sentiment: "risk_on" | "risk_neutral" | "risk_off";
+    one_liner: string;
+  };
+  local_market: {
+    support: number;
+    resistance: number;
+    levels_rationale: string;
+    flow_comment: string;
+    prediction: string;
+    prediction_rationales: string[];
+  };
+  stock_notes: {
+    symbol: string;
+    yesterday: string;
+    technical: string;
+    action: "買進" | "持有" | "減碼" | "觀望";
+    rationale: string;
+    entry_price: number;
+    stop_loss: number;
+    target_price: number;
+  }[];
+  risks: {
+    events: string[];
+    black_swan_watch: string[];
+    monitor_signals: string[];
+  };
+  overall_stance: "bullish" | "neutral" | "bearish";
+}
+
 export interface OverviewData {
   market: string;
   trade_date: string;
   model: string;
-  report: {
-    overall_stance: "bullish" | "neutral" | "bearish";
-    market_comment: string;
-    portfolio_comment: string;
-    top_picks: { symbol: string; comment: string }[];
-    cautions: string[];
-  };
+  report: DailyBriefing;
   created_at: string | null;
 }
 

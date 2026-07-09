@@ -67,9 +67,10 @@ class GeminiProvider(AIProvider):
 
     def _batch_prompt(self, contexts: list[AnalysisContext]) -> str:
         blocks = "\n\n---\n\n".join(self._context_block(c) for c in contexts)
+        symbols = "、".join(c.symbol for c in contexts)
         return (
-            f"請分析以下 {len(contexts)} 檔股票，於 reports 陣列中依序回傳每一檔的報告"
-            f"（symbol 需與輸入一致）。\n\n{blocks}"
+            f"請分析以下 {len(contexts)} 檔股票，於 reports 陣列中依序回傳每一檔的報告。\n"
+            f"注意：symbol 欄位只填股票代號本身（{symbols}），不要加市場前綴或名稱。\n\n{blocks}"
         )
 
     @staticmethod

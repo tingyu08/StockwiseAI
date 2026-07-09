@@ -76,8 +76,20 @@ async def orders_view(market: Market, db: Session = Depends(get_db)) -> Envelope
 
 @router.post("/simulation/{market}:decide", response_model=Envelope)
 async def trigger_decisions(market: Market, db: Session = Depends(get_db)) -> Envelope:
-    """手動觸發 AI 決策（正式流程由排程執行）。"""
-    return ok(run_decisions(db, market))
+    """手動觸發 AI 決策。會先自動對託管股跑當日批次分析（有快取不重複扣額度）。"""
+    from sqlalchemy import select
+
+    from app.models import WatchlistItem
+    from app.services.analysis_service import run_batch
+
+    managed = db.execute(
+        select(Stock)
+        .join(WatchlistItem, WatchlistItem.stock_id == Stock.id)
+        .where(Stock.market == market, WatchlistItem.ai_managed.is_(True))
+    ).scalars().all()
+    batch_result = await run_batch(db, managed) if managed else {"analyzed": 0, "skipped": 0}
+    result = run_decisions(db, market)
+    return ok({**result, "batch": batch_result})
 
 
 @router.post("/simulation/{market}:fill", response_model=Envelope)

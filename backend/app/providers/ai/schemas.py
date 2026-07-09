@@ -40,19 +40,55 @@ class BatchAnalysisResult(BaseModel):
     reports: list[AnalysisReport]
 
 
-class TopPick(BaseModel):
+class GlobalModule(BaseModel):
+    """模組 1：全球盤勢總結。"""
+
+    index_comments: list[str]  # 三大指數與費半動向解讀（每條一句）
+    key_stocks_comment: str  # 關鍵權值股表現（含 ADR）
+    risk_sentiment: Literal["risk_on", "risk_neutral", "risk_off"]
+    one_liner: str  # 一句話總結
+
+
+class LocalMarketModule(BaseModel):
+    """模組 2：今日大盤預判（依提供的技術位階數據）。"""
+
+    support: float  # 關鍵支撐（需有技術依據）
+    resistance: float  # 關鍵壓力
+    levels_rationale: str  # 支撐壓力的技術依據
+    flow_comment: str  # 法人/籌碼解讀（無資料時說明）
+    prediction: Literal["開高走高", "開高走低", "開低走高", "開低走低", "震盪整理"]
+    prediction_rationales: list[str]  # 2~3 個依據
+
+
+class StockNote(BaseModel):
+    """模組 3：單一標的點評。"""
+
     symbol: str
-    comment: str
+    yesterday: str  # 昨日表現
+    technical: str  # 短期技術面判斷
+    action: Literal["買進", "持有", "減碼", "觀望"]
+    rationale: str
+    entry_price: float
+    stop_loss: float
+    target_price: float
 
 
-class OverviewReport(BaseModel):
-    """整體自選股總評（投資組合層級）。"""
+class RiskModule(BaseModel):
+    """模組 4：今日風險提示。"""
 
+    events: list[str]  # 已知的重大事件/數據（不確定的要標註）
+    black_swan_watch: list[str]  # 地緣政治或黑天鵝觀察點
+    monitor_signals: list[str]  # 需要盤中特別監控的訊號
+
+
+class DailyBriefing(BaseModel):
+    """每日投資簡報（四模組）。"""
+
+    global_market: GlobalModule
+    local_market: LocalMarketModule
+    stock_notes: list[StockNote]
+    risks: RiskModule
     overall_stance: Literal["bullish", "neutral", "bearish"]
-    market_comment: str  # 整體市場觀察（100 字內）
-    portfolio_comment: str  # 自選組合整體評語（150 字內）
-    top_picks: list[TopPick]  # 最值得關注的 1~3 檔
-    cautions: list[str]  # 需要留意的風險 1~3 條
 
 
 class NewsDigest(BaseModel):

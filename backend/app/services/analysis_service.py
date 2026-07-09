@@ -101,9 +101,14 @@ async def run_batch(db: Session, stocks: list[Stock], kind: str = "routine") -> 
         batch = pending[i : i + 8]
         contexts = [await build_context(db, s) for s in batch]
         result, model_used = await ai_router.analyze_batch(db, contexts)
-        by_symbol = {r.symbol: r for r in result.reports}
-        for stock in batch:
-            report = by_symbol.get(stock.symbol)
+        # 模型偶爾把 symbol 回成 'TW/2330' 或含名稱 → 正規化後比對；
+        # 數量一致時再以順序比對兜底（批次 prompt 要求依序回傳）
+        by_symbol = {_norm_symbol(r.symbol): r for r in result.reports}
+        for idx, stock in enumerate(batch):
+            report = by_symbol.get(_norm_symbol(stock.symbol))
+            if report is None and len(result.reports) == len(batch):
+                report = result.reports[idx]
+                logger.warning("批次 symbol 不符（%s），以順序兜底", stock.symbol)
             if report is None:
                 logger.warning("批次回應缺少 %s，跳過", stock.symbol)
                 continue
@@ -160,7 +165,7 @@ async def run_deep(db: Session, stock: Stock) -> AiReport:
 
 
 async def run_overview(db: Session, market: str) -> "AiOverview":
-    """一鍵：全部自選批次分析（快取）→ 綜合成投資組合總評（當日快取）。"""
+    """一鍵：全部自選批次分析（快取）→ 四模組每日簡報（當日快取）。"""
     from app.models import AiOverview, WatchlistItem
 
     stocks = db.execute(
@@ -186,28 +191,46 @@ async def run_overview(db: Session, market: str) -> "AiOverview":
     # 1) 確保每檔都有當日例行報告（已有的會被快取跳過）
     await run_batch(db, stocks, kind="routine")
 
-    # 2) 收集各股報告摘要，一次呼叫產生總評
+    # 2) 市場環境（真實指數/ADR 數據，AI 只解讀不虛構）
+    from app.services.market_context import build_market_context
+
+    market_ctx = await build_market_context(market)
+
+    # 3) 各股詳細摘要（昨日表現＋AI 報告全項）
     lines = []
     for stock in stocks:
         report = latest_report(db, stock, kinds=("deep", "routine"))
+        chg = _yesterday_change(db, stock)
         if report is None:
+            lines.append(f"- {stock.symbol} {stock.name}：{chg}｜（尚無 AI 報告）")
             continue
-        payload = json.loads(report.payload_json)
+        p = json.loads(report.payload_json)
         lines.append(
-            f"- {stock.symbol} {stock.name}：{payload['action']}"
-            f"（信心 {payload['confidence']:.0%}）｜{payload['reasoning'][:80]}"
+            f"- {stock.symbol} {stock.name}：{chg}"
+            f"｜AI={p['action']}（信心 {p['confidence']:.0%}）"
+            f"｜目標 {p['target_price_low']}~{p['target_price_high']}、停損 {p['stop_loss']}"
+            f"｜{p['reasoning'][:100]}"
         )
-    if not lines:
-        raise NotFoundError("尚無任何個股分析報告可供總評")
+
+    local_name = "台股（加權指數）" if market == "TW" else "美股（S&P 500）"
+    prompt = f"""請根據以下真實數據，產出一份今日投資簡報（四個模組）。
+
+{market_ctx}
+
+【自選標的現況與個股 AI 分析】
+{chr(10).join(lines)}
+
+要求：
+- 模組1（global_market）：解讀上方全球指數與 ADR 數據，判斷風險情緒
+- 模組2（local_market）：{local_name}的支撐/壓力必須引用上方提供的 MA20/MA60/近20日高低作為技術依據，並五選一預判今日走勢、給 2~3 個依據；法人資料若未提供請在 flow_comment 誠實說明
+- 模組3（stock_notes）：為上方每一檔標的產出點評，關鍵價位以個股 AI 報告的目標/停損為基礎微調
+- 模組4（risks）：只列出你有把握的重大事件（不確定的標註「時間請以官方公告為準」），黑天鵝觀察點與盤中監控訊號要具體可操作
+- 所有數字必須來自提供的資料，不得虛構行情"""
 
     from app.providers.ai.router import generate_structured
-    from app.providers.ai.schemas import OverviewReport
+    from app.providers.ai.schemas import DailyBriefing
 
-    prompt = (
-        f"以下是我{'台股' if market == 'TW' else '美股'}自選清單中各股票的今日 AI 分析摘要，"
-        f"請以投資組合的角度給出整體總評：\n\n" + "\n".join(lines)
-    )
-    result, model = await generate_structured(db, prompt, OverviewReport)
+    result, model = await generate_structured(db, prompt, DailyBriefing)
 
     overview = AiOverview(
         market=market, trade_date=trade_date, model=model,
@@ -217,6 +240,19 @@ async def run_overview(db: Session, market: str) -> "AiOverview":
     db.commit()
     db.refresh(overview)
     return overview
+
+
+def _yesterday_change(db: Session, stock: Stock) -> str:
+    rows = db.execute(
+        select(DailyPrice)
+        .where(DailyPrice.stock_id == stock.id, DailyPrice.close.is_not(None))
+        .order_by(DailyPrice.date.desc())
+        .limit(2)
+    ).scalars().all()
+    if len(rows) < 2:
+        return "昨日資料不足"
+    last, prev = float(rows[0].close), float(rows[1].close)
+    return f"收盤 {last}（{(last - prev) / prev * 100:+.2f}%）"
 
 
 def overview_dto(overview) -> dict:
@@ -241,6 +277,14 @@ def report_dto(report: AiReport) -> dict:
 
 
 # ---- helpers ----
+
+def _norm_symbol(raw: str) -> str:
+    """'TW/2330'、'2330 台積電' → '2330'。"""
+    s = raw.strip().upper()
+    if "/" in s:
+        s = s.split("/")[-1]
+    return s.split()[0] if s else s
+
 
 def _pct(closes: list[float], days: int) -> float:
     if len(closes) <= days:
