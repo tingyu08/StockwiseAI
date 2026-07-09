@@ -38,6 +38,20 @@ class Prediction(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class AiOverview(Base):
+    """整體自選股的 AI 總評（每市場每交易日一份）。"""
+
+    __tablename__ = "ai_overviews"
+    __table_args__ = (UniqueConstraint("market", "trade_date", name="uq_overview_daily"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    market: Mapped[str] = mapped_column(String(2))
+    trade_date: Mapped[date] = mapped_column(Date)
+    model: Mapped[str] = mapped_column(String(64))
+    payload_json: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 class AiUsageLog(Base):
     __tablename__ = "ai_usage_log"
 

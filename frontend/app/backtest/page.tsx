@@ -13,6 +13,7 @@ import {
   YAxis,
 } from "recharts";
 
+import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import { useWatchlist } from "@/hooks/use-stocks";
 import { apiGet } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
@@ -134,6 +135,7 @@ export default function BacktestPage() {
           </button>
         </div>
         {run.isError && <p className="mt-2 text-sm text-red-500">{(run.error as Error).message}</p>}
+        <FreshnessNote>{FRESHNESS.backtest}</FreshnessNote>
       </section>
 
       {result && (

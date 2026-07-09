@@ -1,12 +1,14 @@
 from app.models.alert import Alert, AlertEvent
-from app.models.analysis import AiReport, AiUsageLog, Prediction
+from app.models.analysis import AiOverview, AiReport, AiUsageLog, Prediction
 from app.models.simulation import SimAccount, SimOrder
 from app.models.stock import DailyPrice, EtfNav, Indicator, Stock
-from app.models.watchlist import WatchlistItem
+from app.models.watchlist import WatchGroup, WatchlistItem
 
 __all__ = [
     "Alert",
     "AlertEvent",
+    "AiOverview",
+    "WatchGroup",
     "Stock",
     "DailyPrice",
     "EtfNav",

@@ -50,6 +50,11 @@ class GeminiProvider(AIProvider):
         prompt = self._batch_prompt(contexts)
         return await self._generate(prompt, BatchAnalysisResult)
 
+    async def generate(self, prompt: str, output_model: type[T]) -> T:
+        """通用結構化生成（總評等非單股任務用）。含額度檢查與用量記錄。"""
+        ensure_quota(self.db, self.model_name)
+        return await self._generate(prompt, output_model)
+
     async def analyze_deep(self, context: AnalysisContext) -> AnalysisReport:
         ensure_quota(self.db, self.model_name)
         prompt = (

@@ -159,6 +159,76 @@ async def run_deep(db: Session, stock: Stock) -> AiReport:
     return row
 
 
+async def run_overview(db: Session, market: str) -> "AiOverview":
+    """一鍵：全部自選批次分析（快取）→ 綜合成投資組合總評（當日快取）。"""
+    from app.models import AiOverview, WatchlistItem
+
+    stocks = db.execute(
+        select(Stock)
+        .join(WatchlistItem, WatchlistItem.stock_id == Stock.id)
+        .where(Stock.market == market)
+    ).scalars().all()
+    if not stocks:
+        raise NotFoundError("自選清單為空，請先加入股票")
+
+    trade_date = max(
+        (d for s in stocks if (d := _last_trade_date(db, s)) is not None), default=None
+    )
+    if trade_date is None:
+        raise NotFoundError("尚無價格資料，請先同步")
+
+    existing = db.execute(
+        select(AiOverview).where(AiOverview.market == market, AiOverview.trade_date == trade_date)
+    ).scalar_one_or_none()
+    if existing:
+        return existing
+
+    # 1) 確保每檔都有當日例行報告（已有的會被快取跳過）
+    await run_batch(db, stocks, kind="routine")
+
+    # 2) 收集各股報告摘要，一次呼叫產生總評
+    lines = []
+    for stock in stocks:
+        report = latest_report(db, stock, kinds=("deep", "routine"))
+        if report is None:
+            continue
+        payload = json.loads(report.payload_json)
+        lines.append(
+            f"- {stock.symbol} {stock.name}：{payload['action']}"
+            f"（信心 {payload['confidence']:.0%}）｜{payload['reasoning'][:80]}"
+        )
+    if not lines:
+        raise NotFoundError("尚無任何個股分析報告可供總評")
+
+    from app.providers.ai.router import generate_structured
+    from app.providers.ai.schemas import OverviewReport
+
+    prompt = (
+        f"以下是我{'台股' if market == 'TW' else '美股'}自選清單中各股票的今日 AI 分析摘要，"
+        f"請以投資組合的角度給出整體總評：\n\n" + "\n".join(lines)
+    )
+    result, model = await generate_structured(db, prompt, OverviewReport)
+
+    overview = AiOverview(
+        market=market, trade_date=trade_date, model=model,
+        payload_json=result.model_dump_json(),
+    )
+    db.add(overview)
+    db.commit()
+    db.refresh(overview)
+    return overview
+
+
+def overview_dto(overview) -> dict:
+    return {
+        "market": overview.market,
+        "trade_date": overview.trade_date.isoformat(),
+        "model": overview.model,
+        "report": json.loads(overview.payload_json),
+        "created_at": overview.created_at.isoformat() if overview.created_at else None,
+    }
+
+
 def report_dto(report: AiReport) -> dict:
     return {
         "trade_date": report.trade_date.isoformat(),

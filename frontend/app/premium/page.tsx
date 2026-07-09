@@ -12,6 +12,7 @@ import {
   YAxis,
 } from "recharts";
 
+import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import { usePremiumHistory, usePremiumList } from "@/hooks/use-premium";
 import { useMarketStore } from "@/stores/market";
 
@@ -27,8 +28,11 @@ export default function PremiumPage() {
         <div className="flex items-center justify-between px-5 pt-4">
           <h2 className="text-lg font-semibold">ETF 折溢價</h2>
           <p className="text-xs text-neutral-400">
-            正=溢價（市價高於淨值）、負=折價；歷史由每日快照累積
+            正=溢價（市價高於淨值）、負=折價
           </p>
+        </div>
+        <div className="px-5">
+          <FreshnessNote>{FRESHNESS.premium}</FreshnessNote>
         </div>
         {isLoading && <p className="p-5 text-sm text-neutral-500">載入中…</p>}
         {isError && <p className="p-5 text-sm text-red-500">{(error as Error).message}</p>}

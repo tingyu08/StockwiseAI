@@ -12,6 +12,8 @@ import {
   YAxis,
 } from "recharts";
 
+import { AiManagedPanel } from "@/components/ai-managed-panel";
+import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import {
   useRunSimStep,
   useSimAccount,
@@ -75,6 +77,11 @@ export default function SimulationPage() {
             />
           </div>
         )}
+      </section>
+
+      <section className="rounded-xl border border-neutral-200 p-5 dark:border-neutral-800">
+        <h3 className="mb-2 text-sm font-medium text-neutral-500">⚙️ AI 託管管理</h3>
+        <AiManagedPanel />
       </section>
 
       {account && account.equity_curve.length > 1 && (
@@ -164,6 +171,7 @@ export default function SimulationPage() {
       <p className="text-xs text-neutral-400">
         模擬交易使用虛擬資金，隔日開盤價成交（台股含手續費與證交稅）。僅供研究參考，不構成投資建議。
       </p>
+      <FreshnessNote>{FRESHNESS.simulation}</FreshnessNote>
     </div>
   );
 }

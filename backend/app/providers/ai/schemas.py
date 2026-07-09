@@ -40,6 +40,21 @@ class BatchAnalysisResult(BaseModel):
     reports: list[AnalysisReport]
 
 
+class TopPick(BaseModel):
+    symbol: str
+    comment: str
+
+
+class OverviewReport(BaseModel):
+    """整體自選股總評（投資組合層級）。"""
+
+    overall_stance: Literal["bullish", "neutral", "bearish"]
+    market_comment: str  # 整體市場觀察（100 字內）
+    portfolio_comment: str  # 自選組合整體評語（150 字內）
+    top_picks: list[TopPick]  # 最值得關注的 1~3 檔
+    cautions: list[str]  # 需要留意的風險 1~3 條
+
+
 class NewsDigest(BaseModel):
     """Antigravity 新聞研究輸出（自由文字摘要＋來源）。"""
 

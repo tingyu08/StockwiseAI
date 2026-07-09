@@ -13,6 +13,8 @@ import {
   YAxis,
 } from "recharts";
 
+import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
+import { useGroups } from "@/hooks/use-groups";
 import { useWatchlist } from "@/hooks/use-stocks";
 import { apiGet } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
@@ -47,6 +49,7 @@ const COLUMNS = [
 export default function ComparePage() {
   const market = useMarketStore((s) => s.market);
   const { data: watchlist } = useWatchlist();
+  const { data: groups } = useGroups();
   const [selected, setSelected] = useState<string[]>([]);
   const [range, setRange] = useState<"3m" | "6m" | "1y">("1y");
   const [sortKey, setSortKey] = useState<(typeof COLUMNS)[number]["key"]>("return_1m");
@@ -96,21 +99,57 @@ export default function ComparePage() {
         {!watchlist?.length && (
           <p className="text-sm text-neutral-500">自選清單為空，請先到儀表板加入股票。</p>
         )}
-        <div className="flex flex-wrap gap-2">
-          {watchlist?.map((w) => (
-            <button
-              key={w.symbol}
-              onClick={() => toggle(w.symbol)}
-              className={`rounded-full border px-3 py-1 text-sm ${
-                selected.includes(w.symbol)
-                  ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
-                  : "border-neutral-300 text-neutral-600 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
-              }`}
-            >
-              {w.symbol} {w.name}
-            </button>
-          ))}
-        </div>
+        {(() => {
+          const sorted = [...(watchlist ?? [])].sort((a, b) => a.sort_order - b.sort_order);
+          const sections = [
+            ...(groups ?? []).map((g) => ({
+              key: `g${g.id}`,
+              name: g.name,
+              items: sorted.filter((w) => w.group_id === g.id),
+            })),
+            { key: "none", name: "未分組", items: sorted.filter((w) => w.group_id === null) },
+          ].filter((s) => s.items.length > 0);
+
+          return sections.map((section) => {
+            const allSelected = section.items.every((w) => selected.includes(w.symbol));
+            return (
+              <div key={section.key} className="mb-2">
+                <div className="mb-1 flex items-center gap-2">
+                  <h3 className="text-xs font-medium text-neutral-500">{section.name}</h3>
+                  <button
+                    onClick={() =>
+                      setSelected((prev) => {
+                        const symbols = section.items.map((w) => w.symbol);
+                        if (allSelected) return prev.filter((s) => !symbols.includes(s));
+                        const merged = [...prev, ...symbols.filter((s) => !prev.includes(s))];
+                        return merged.slice(0, 8);
+                      })
+                    }
+                    className="text-xs text-blue-500 hover:underline"
+                  >
+                    {allSelected ? "取消全選" : "全選此群組"}
+                  </button>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {section.items.map((w) => (
+                    <button
+                      key={w.symbol}
+                      onClick={() => toggle(w.symbol)}
+                      className={`rounded-full border px-3 py-1 text-sm ${
+                        selected.includes(w.symbol)
+                          ? "border-blue-500 bg-blue-50 text-blue-700 dark:bg-blue-950 dark:text-blue-300"
+                          : "border-neutral-300 text-neutral-600 hover:bg-neutral-100 dark:border-neutral-700 dark:text-neutral-300 dark:hover:bg-neutral-800"
+                      }`}
+                    >
+                      {w.symbol} {w.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            );
+          });
+        })()}
+        <FreshnessNote>{FRESHNESS.compare}</FreshnessNote>
       </section>
 
       {isError && <p className="text-sm text-red-500">{(error as Error).message}</p>}

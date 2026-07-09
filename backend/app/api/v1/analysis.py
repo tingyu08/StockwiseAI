@@ -22,6 +22,35 @@ def _get_stock(db: Session, market: str, symbol: str) -> Stock:
     return stock
 
 
+@router.get("/analysis/overview", response_model=Envelope)
+async def get_overview(
+    market: Literal["TW", "US"] = Query(...), db: Session = Depends(get_db)
+) -> Envelope:
+    """今日投資組合總評（無則 404，前端顯示產生按鈕）。"""
+    from sqlalchemy import select as sa_select
+
+    from app.models import AiOverview
+
+    overview = db.execute(
+        sa_select(AiOverview)
+        .where(AiOverview.market == market)
+        .order_by(AiOverview.trade_date.desc())
+        .limit(1)
+    ).scalar_one_or_none()
+    if overview is None:
+        raise NotFoundError("尚無總評，點「一鍵分析全部自選」產生")
+    return ok(analysis_service.overview_dto(overview))
+
+
+@router.post("/analysis/overview:run", response_model=Envelope)
+async def run_overview(
+    market: Literal["TW", "US"] = Query(...), db: Session = Depends(get_db)
+) -> Envelope:
+    """一鍵：全部自選批次分析＋總評（同一交易日快取，不重複扣額度）。"""
+    overview = await analysis_service.run_overview(db, market)
+    return ok(analysis_service.overview_dto(overview))
+
+
 @router.get("/stocks/{symbol}/analysis", response_model=Envelope)
 async def get_analysis(
     symbol: str,

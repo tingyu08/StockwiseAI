@@ -1,5 +1,6 @@
 "use client";
 
+import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import {
   useAnalysis,
   useRunDeep,
@@ -67,6 +68,7 @@ export function ReportCard({ symbol }: { symbol: string }) {
       {data && <ReportBody data={data} />}
 
       <p className="mt-4 text-xs text-neutral-400">僅供參考，不構成投資建議。</p>
+      <FreshnessNote>{FRESHNESS.analysis}</FreshnessNote>
     </section>
   );
 }

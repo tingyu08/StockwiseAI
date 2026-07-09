@@ -4,6 +4,7 @@ import { use, useState } from "react";
 
 import { ReportCard } from "@/components/analysis/report-card";
 import { CandlestickChart } from "@/components/charts/candlestick";
+import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import { usePredictions } from "@/hooks/use-premium";
 import { usePrices } from "@/hooks/use-stocks";
 import { useMarketStore } from "@/stores/market";
@@ -84,6 +85,7 @@ export default function StockPage({
             market={market}
             prediction={showPrediction ? prediction?.horizons["20"] : undefined}
           />
+          <FreshnessNote>{FRESHNESS.prices}</FreshnessNote>
         </div>
       )}
 

@@ -38,3 +38,16 @@ async def analyze_batch(db: Session, contexts: list[AnalysisContext]) -> tuple[B
 async def analyze_deep(db: Session, context: AnalysisContext) -> tuple[AnalysisReport, str]:
     provider = GeminiProvider(DEEP_MODEL, db, use_schema=True)
     return await provider.analyze_deep(context), DEEP_MODEL
+
+
+async def generate_structured(db: Session, prompt: str, output_model):
+    """通用結構化生成，走例行降級鏈。回傳 (結果, 模型)。"""
+    last_error: Exception | None = None
+    for model, use_schema in ROUTINE_CHAIN:
+        try:
+            provider = GeminiProvider(model, db, use_schema=use_schema)
+            return await provider.generate(prompt, output_model), model
+        except (QuotaExceededError, UpstreamError) as exc:
+            logger.warning("結構化生成 %s 失敗，降級下一層：%s", model, exc.message)
+            last_error = exc
+    raise UpstreamError("所有模型皆不可用") from last_error

@@ -37,4 +37,6 @@ export interface WatchItem {
   market: "TW" | "US";
   kind: "stock" | "etf";
   ai_managed: boolean;
+  group_id: number | null;
+  sort_order: number;
 }
