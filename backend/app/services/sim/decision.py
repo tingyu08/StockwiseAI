@@ -38,11 +38,14 @@ def run_decisions(db: Session, market: str) -> dict:
     ).scalars().all()
 
     created: list[dict] = []
+    skipped: list[dict] = []
     for stock in managed:
         if _has_pending(db, account.id, stock.id):
+            skipped.append({"symbol": stock.symbol, "reason": "已有待成交委託"})
             continue
         last_close = _last_close(db, stock.id)
         if last_close is None:
+            skipped.append({"symbol": stock.symbol, "reason": "無價格資料"})
             continue
 
         held_qty = positions.get(stock.id, 0.0)
@@ -59,26 +62,46 @@ def run_decisions(db: Session, market: str) -> dict:
 
         report = _today_report(db, stock.id)
         if report is None:
+            skipped.append({"symbol": stock.symbol, "reason": "無最新交易日的 AI 報告（請先產生分析）"})
             continue
         confidence = float(report.confidence or 0)
 
         # 2) 賣出訊號
-        if report.action == "sell" and held_qty > 0 and confidence >= SELL_CONFIDENCE:
-            db.add(_make_order(account.id, stock.id, "sell", held_qty, report.id))
-            created.append({"symbol": stock.symbol, "side": "sell", "reason": "ai-signal"})
+        if report.action == "sell":
+            if held_qty <= 0:
+                skipped.append({"symbol": stock.symbol, "reason": "AI 建議賣出，但無持倉"})
+            elif confidence < SELL_CONFIDENCE:
+                skipped.append({"symbol": stock.symbol, "reason": f"賣出信心 {confidence:.0%} 未達門檻 {SELL_CONFIDENCE:.0%}"})
+            else:
+                db.add(_make_order(account.id, stock.id, "sell", held_qty, report.id))
+                created.append({"symbol": stock.symbol, "side": "sell", "reason": "ai-signal"})
             continue
 
         # 3) 買進訊號（已有持倉不加碼，控制單一持股曝險）
-        if report.action == "buy" and held_qty == 0 and confidence >= BUY_CONFIDENCE:
-            qty = _size_buy(db, account, equity, last_close, market)
-            if qty <= 0:
-                logger.info("skip buy %s: 部位/現金限制不足", stock.symbol)
-                continue
-            db.add(_make_order(account.id, stock.id, "buy", qty, report.id))
-            created.append({"symbol": stock.symbol, "side": "buy", "qty": qty})
+        if report.action == "buy":
+            if held_qty > 0:
+                skipped.append({"symbol": stock.symbol, "reason": "已有持倉，不加碼"})
+            elif confidence < BUY_CONFIDENCE:
+                skipped.append({"symbol": stock.symbol, "reason": f"買進信心 {confidence:.0%} 未達門檻 {BUY_CONFIDENCE:.0%}"})
+            else:
+                qty = _size_buy(db, account, equity, last_close, market)
+                if qty <= 0:
+                    skipped.append({"symbol": stock.symbol, "reason": "部位上限/現金保留限制，無可用額度"})
+                else:
+                    db.add(_make_order(account.id, stock.id, "buy", qty, report.id))
+                    created.append({"symbol": stock.symbol, "side": "buy", "qty": qty})
+            continue
+
+        skipped.append({"symbol": stock.symbol, "reason": "AI 建議觀望（hold）"})
 
     db.commit()
-    return {"market": market, "orders_created": len(created), "orders": created}
+    return {
+        "market": market,
+        "managed": len(managed),
+        "orders_created": len(created),
+        "orders": created,
+        "skipped": skipped,
+    }
 
 
 def _size_buy(db: Session, account, equity: float, price: float, market: str) -> float:

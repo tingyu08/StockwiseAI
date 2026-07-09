@@ -61,6 +61,7 @@ export default function SimulationPage() {
         {runStep.isError && (
           <p className="mb-2 text-sm text-red-500">{(runStep.error as Error).message}</p>
         )}
+        {runStep.isSuccess && <StepResult data={runStep.data} />}
         {account && (
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
             <Stat label="總權益" value={`${account.equity.toLocaleString()} ${account.currency}`} />
@@ -172,6 +173,54 @@ export default function SimulationPage() {
         模擬交易使用虛擬資金，隔日開盤價成交（台股含手續費與證交稅）。僅供研究參考，不構成投資建議。
       </p>
       <FreshnessNote>{FRESHNESS.simulation}</FreshnessNote>
+    </div>
+  );
+}
+
+interface StepResultData {
+  orders_created?: number;
+  orders?: { symbol: string; side: string; qty?: number; reason?: string }[];
+  skipped?: { symbol: string; reason: string }[];
+  filled?: number;
+  rejected?: number;
+  waiting?: number;
+  managed?: number;
+}
+
+function StepResult({ data }: { data: StepResultData }) {
+  const isDecide = data.orders_created !== undefined;
+  return (
+    <div className="mb-4 rounded-lg bg-neutral-50 p-3 text-xs leading-relaxed dark:bg-neutral-900">
+      {isDecide ? (
+        <>
+          <p className="font-medium">
+            決策完成：託管 {data.managed ?? 0} 檔，產生 {data.orders_created} 筆委託
+            {(data.orders_created ?? 0) > 0 && "（將於下一交易日開盤價成交）"}
+          </p>
+          {data.orders?.map((o) => (
+            <p key={o.symbol} className="text-blue-600 dark:text-blue-400">
+              ✓ {o.symbol} {o.side === "buy" ? "買進" : "賣出"}
+              {o.qty ? ` ${o.qty.toLocaleString()} 股` : ""}
+              {o.reason === "stop-loss" ? "（停損觸發）" : ""}
+            </p>
+          ))}
+          {!!data.skipped?.length && (
+            <div className="mt-1 text-neutral-500">
+              {data.skipped.map((s) => (
+                <p key={s.symbol}>— {s.symbol}：{s.reason}</p>
+              ))}
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="font-medium">
+          撮合完成：成交 {data.filled} 筆、拒絕 {data.rejected} 筆
+          {(data.waiting ?? 0) > 0 &&
+            `、${data.waiting} 筆等待下一交易日開盤資料（明日資料同步後自動成交）`}
+          {data.filled === 0 && data.rejected === 0 && (data.waiting ?? 0) === 0 &&
+            "——目前沒有待成交的委託單"}
+        </p>
+      )}
     </div>
   );
 }
