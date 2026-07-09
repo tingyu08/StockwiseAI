@@ -60,6 +60,28 @@ async def ai_batch_daily(market: str) -> dict:
         db.close()  # Neon 紀律：job 結束即釋放連線
 
 
+async def sim_decide_daily(market: str) -> dict:
+    """AI 批次分析後，依報告產生模擬委託單（隔日開盤成交）。"""
+    from app.services.sim.decision import run_decisions
+
+    db = SessionLocal()
+    try:
+        return run_decisions(db, market)
+    finally:
+        db.close()
+
+
+async def sim_fill_daily(market: str) -> dict:
+    """資料同步後撮合 pending 單。"""
+    from app.services.sim.engine import fill_pending_orders
+
+    db = SessionLocal()
+    try:
+        return fill_pending_orders(db, market)
+    finally:
+        db.close()
+
+
 async def nav_snapshot_daily(market: str) -> dict:
     """ETF 淨值/折溢價每日快照。"""
     from app.services.premium_service import snapshot_premiums
@@ -78,18 +100,27 @@ JOBS = {
     "ai-batch-us": lambda: ai_batch_daily("US"),
     "nav-tw": lambda: nav_snapshot_daily("TW"),
     "nav-us": lambda: nav_snapshot_daily("US"),
+    "sim-decide-tw": lambda: sim_decide_daily("TW"),
+    "sim-decide-us": lambda: sim_decide_daily("US"),
+    "sim-fill-tw": lambda: sim_fill_daily("TW"),
+    "sim-fill-us": lambda: sim_fill_daily("US"),
 }
 
 
 def start_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=TZ)
-    # 台股：14:30 同步 → 15:00 AI 批次；美股（台灣時間）：05:30 同步 → 06:00 AI 批次
+    # 台股：14:30 同步 → 14:35 撮合昨日委託 → 14:45 淨值 → 15:00 AI 批次 → 15:15 產生委託
     scheduler.add_job(sync_market_daily, CronTrigger(hour=14, minute=30, timezone=TZ), args=["TW"])
+    scheduler.add_job(sim_fill_daily, CronTrigger(hour=14, minute=35, timezone=TZ), args=["TW"])
     scheduler.add_job(nav_snapshot_daily, CronTrigger(hour=14, minute=45, timezone=TZ), args=["TW"])
     scheduler.add_job(ai_batch_daily, CronTrigger(hour=15, minute=0, timezone=TZ), args=["TW"])
+    scheduler.add_job(sim_decide_daily, CronTrigger(hour=15, minute=15, timezone=TZ), args=["TW"])
+    # 美股（台灣時間清晨）：同樣序列
     scheduler.add_job(sync_market_daily, CronTrigger(hour=5, minute=30, timezone=TZ), args=["US"])
+    scheduler.add_job(sim_fill_daily, CronTrigger(hour=5, minute=35, timezone=TZ), args=["US"])
     scheduler.add_job(nav_snapshot_daily, CronTrigger(hour=5, minute=45, timezone=TZ), args=["US"])
     scheduler.add_job(ai_batch_daily, CronTrigger(hour=6, minute=0, timezone=TZ), args=["US"])
+    scheduler.add_job(sim_decide_daily, CronTrigger(hour=6, minute=15, timezone=TZ), args=["US"])
     scheduler.start()
     logger.info("APScheduler started (internal mode)")
     return scheduler

@@ -3,12 +3,14 @@
 import Link from "next/link";
 
 import { useRemoveWatch, useWatchlist } from "@/hooks/use-stocks";
+import { useToggleAiManaged } from "@/hooks/use-simulation";
 import { useMarketStore } from "@/stores/market";
 
 export function WatchlistPanel() {
   const market = useMarketStore((s) => s.market);
   const { data: items, isLoading, isError, error } = useWatchlist();
   const removeWatch = useRemoveWatch();
+  const toggleAi = useToggleAiManaged();
 
   if (isLoading) return <p className="text-sm text-neutral-500">載入自選清單中…</p>;
   if (isError)
@@ -27,13 +29,29 @@ export function WatchlistPanel() {
             <span className="font-mono font-semibold">{w.symbol}</span>
             <span className="ml-2 text-neutral-500">{w.name}</span>
           </Link>
-          <button
-            onClick={() => removeWatch.mutate(w.symbol)}
-            disabled={removeWatch.isPending}
-            className="text-xs text-neutral-400 hover:text-red-500 disabled:opacity-40"
-          >
-            移除
-          </button>
+          <div className="flex items-center gap-3">
+            <label
+              className="flex cursor-pointer items-center gap-1.5 text-xs text-neutral-500"
+              title="開啟後，AI 會在每日分析後於模擬帳戶自動下單"
+            >
+              <input
+                type="checkbox"
+                checked={w.ai_managed}
+                onChange={(e) =>
+                  toggleAi.mutate({ symbol: w.symbol, ai_managed: e.target.checked })
+                }
+                disabled={toggleAi.isPending}
+              />
+              AI 託管
+            </label>
+            <button
+              onClick={() => removeWatch.mutate(w.symbol)}
+              disabled={removeWatch.isPending}
+              className="text-xs text-neutral-400 hover:text-red-500 disabled:opacity-40"
+            >
+              移除
+            </button>
+          </div>
         </li>
       ))}
     </ul>

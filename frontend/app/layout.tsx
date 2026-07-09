@@ -28,6 +28,7 @@ export default function RootLayout({
                 <Link href="/" className="hover:text-neutral-900 dark:hover:text-white">儀表板</Link>
                 <Link href="/compare" className="hover:text-neutral-900 dark:hover:text-white">比較</Link>
                 <Link href="/premium" className="hover:text-neutral-900 dark:hover:text-white">折溢價</Link>
+                <Link href="/simulation" className="hover:text-neutral-900 dark:hover:text-white">模擬交易</Link>
               </nav>
             </div>
             <Suspense>
