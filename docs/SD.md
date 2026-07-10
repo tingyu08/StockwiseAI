@@ -101,17 +101,27 @@ backend/
 | GET | `/api/v1/stocks?market=tw&q=台積` | 搜尋股票 |
 | GET | `/api/v1/stocks/{symbol}/prices?range=1y` | 日線＋指標序列 |
 | GET | `/api/v1/stocks/{symbol}/analysis` | 當日 AI 報告（無則回 404，前端顯示「尚未分析」） |
+| POST | `/api/v1/stocks/{symbol}/analysis:routine` | 觸發例行分析（當日快取） |
 | POST | `/api/v1/stocks/{symbol}/analysis:deep` | 觸發深度分析（3.5 Flash，檢查額度後執行） |
+| GET/POST | `/api/v1/stocks/{symbol}/news[:run]` | 讀取／觸發 Antigravity 新聞研究 |
 | GET | `/api/v1/stocks/{symbol}/predictions` | 預測區間帶 |
 | GET | `/api/v1/compare?symbols=A,B,C&market=tw` | 報酬率表＋正規化序列 |
 | GET | `/api/v1/premium?market=tw` | ETF 折溢價列表 |
 | GET | `/api/v1/premium/{symbol}/history` | 單檔折溢價歷史 |
 | GET | `/api/v1/simulation/{market}/account` | 帳戶＋持倉＋權益曲線 |
 | GET | `/api/v1/simulation/{market}/orders` | 交易日誌（含 ai_report 連結） |
-| PUT | `/api/v1/simulation/{market}/managed` | 設定 AI 託管清單 |
-| GET | `/api/v1/watchlist?market=tw` / POST / DELETE | 自選股 |
+| POST | `/api/v1/simulation/{market}:decide` / `:fill` | 手動觸發決策／原子撮合 |
+| GET/POST/PATCH/DELETE | `/api/v1/groups`、`/api/v1/watchlist` | 自選股群組、排序與 AI 託管 |
+| GET/POST | `/api/v1/backtest/strategies`、`/api/v1/backtest` | 策略回測（滑價、Sharpe、回撤） |
+| GET/POST/DELETE | `/api/v1/alerts` | 價格／折溢價警示 |
 | GET | `/api/v1/usage` | 各模型今日用量 |
+| GET | `/api/v1/data-status` | 台／美股行情、NAV、AI 資料新鮮度 |
 | POST | `/api/v1/jobs/{name}:run`（需 `X-Job-Token`） | 供 GitHub Actions cron 觸發排程（雲端部署用） |
+| GET | `/api/v1/jobs/runs/{id}` | 查詢 queued/running/succeeded/failed 與結果 |
+| POST | `/api/v1/jobs/runs/{id}:retry` | 重試失敗工作 |
+
+設定 `API_TOKEN` 後，除 `/health` 與排程觸發端點外，所有 API 皆需
+`Authorization: Bearer <API_TOKEN>`。排程觸發仍獨立使用 `X-Job-Token`。
 
 ### 3.3 資料庫 Schema（DDL 摘要）
 
@@ -291,6 +301,9 @@ OPENROUTER_API_KEY=        # 選配（最後備援）
 DATABASE_URL=sqlite:///data/app.db   # 雲端改 postgres://...
 SCHEDULER_MODE=internal    # internal | external
 JOB_TOKEN=                 # 雲端排程觸發用（隨機長字串）
+API_TOKEN=                 # 公開部署必填；私人 API Bearer Token
+ALERT_WEBHOOK_URL=         # 選配；警示觸發 webhook
+CORS_ORIGINS=http://localhost:3000
 ```
 啟動時 `config.py` 驗證必填項，缺少即 fail fast。
 
@@ -298,7 +311,8 @@ JOB_TOKEN=                 # 雲端排程觸發用（隨機長字串）
 
 | 層 | 工具 | 重點 |
 |----|------|------|
-| 單元 | pytest | indicator_service、premium/報酬率計算、sim/engine 撮合與風控（黃金樣本比對） |
-| 整合 | pytest + httpx + 測試 DB | API envelope、market 隔離正確性、額度耗盡時的降級行為（mock AI） |
-| E2E | Playwright | 市場切換全站生效、個股頁圖表渲染、模擬交易日誌展開 |
+| 單元 | pytest | 指標、回測、交易日曆、配額、撮合與風控 |
+| 整合 | pytest + TestClient + 測試 DB | API envelope、認證、市場隔離、工作狀態與 migration |
+| 前端 | Vitest + Testing Library | API Token、資料狀態與圖表元件 |
+| 建置 | ESLint + Next production build | TypeScript、SSR/SSG 與 bundle 驗證 |
 | AI 品質 | 離線評測腳本 | 固定輸入集跑各模型，人工評分報告合理性（prompt 迭代用） |

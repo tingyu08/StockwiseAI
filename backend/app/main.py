@@ -9,6 +9,7 @@ from app.api.v1 import (
     simulation, stocks, usage, watchlist,
 )
 from app.core.config import get_settings
+from app.core.auth import require_api_token
 from app.core.exceptions import register_exception_handlers
 
 logging.basicConfig(level=logging.INFO)
@@ -29,6 +30,8 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()  # fail fast：缺必填環境變數這裡就會炸
     app = FastAPI(title="stock-ai-advisor", version="0.1.0", lifespan=lifespan)
+
+    app.middleware("http")(require_api_token)
 
     app.add_middleware(
         CORSMiddleware,

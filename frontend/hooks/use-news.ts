@@ -2,10 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet, ApiError } from "@/lib/api";
+import { apiGet, apiRequest, ApiError } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8123";
 
 export interface NewsData {
   date: string;
@@ -28,15 +26,10 @@ export function useRunNews(symbol: string) {
   const market = useMarketStore((s) => s.market);
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async () => {
-      const res = await fetch(
-        `${API_BASE}/api/v1/stocks/${symbol}/news:run?market=${market.toUpperCase()}`,
-        { method: "POST" },
-      );
-      const body = await res.json();
-      if (!body.success) throw new Error(body.error ?? "新聞研究失敗");
-      return body.data as NewsData;
-    },
+    mutationFn: () => apiRequest<NewsData>(
+      `/stocks/${symbol}/news:run`,
+      { method: "POST", market },
+    ),
     onSuccess: (data) => {
       qc.setQueryData(["news", market, symbol], data);
       qc.invalidateQueries({ queryKey: ["usage"] });

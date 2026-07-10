@@ -18,6 +18,7 @@ import {
   useRunSimStep,
   useSimAccount,
   useSimOrders,
+  type SimStepResult,
   type SimOrderView,
 } from "@/hooks/use-simulation";
 import { useMarketStore } from "@/stores/market";
@@ -177,17 +178,7 @@ export default function SimulationPage() {
   );
 }
 
-interface StepResultData {
-  orders_created?: number;
-  orders?: { symbol: string; side: string; qty?: number; reason?: string }[];
-  skipped?: { symbol: string; reason: string }[];
-  filled?: number;
-  rejected?: number;
-  waiting?: number;
-  managed?: number;
-}
-
-function StepResult({ data }: { data: StepResultData }) {
+function StepResult({ data }: { data: SimStepResult }) {
   const isDecide = data.orders_created !== undefined;
   return (
     <div className="mb-4 rounded-lg bg-neutral-50 p-3 text-xs leading-relaxed dark:bg-neutral-900">

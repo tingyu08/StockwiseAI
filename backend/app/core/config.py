@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     # --- optional ---
     openrouter_api_key: str = ""
     job_token: str = ""
+    api_token: str = ""
+    alert_webhook_url: str = ""
 
     # --- infrastructure ---
     database_url: str = f"sqlite:///{BASE_DIR / 'data' / 'app.db'}"

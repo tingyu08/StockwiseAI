@@ -77,6 +77,16 @@ export function CandlestickChart({ data, market, prediction }: Props) {
       );
     }
 
+    for (const key of ["bb_upper", "bb_lower"] as const) {
+      const line = chart.addSeries(LineSeries, {
+        color: "rgba(14,165,233,0.45)", lineWidth: 1, lineStyle: 3,
+        priceLineVisible: false, lastValueVisible: false,
+      });
+      line.setData(
+        data.filter((d) => d[key] != null).map((d) => ({ time: d.date, value: d[key]! })),
+      );
+    }
+
     const volume = chart.addSeries(HistogramSeries, {
       priceScaleId: "volume",
       priceFormat: { type: "volume" },
@@ -131,6 +141,7 @@ export function CandlestickChart({ data, market, prediction }: Props) {
         <span style={{ color: MA_COLORS.ma5 }}>MA5</span>
         <span style={{ color: MA_COLORS.ma20 }}>MA20</span>
         <span style={{ color: MA_COLORS.ma60 }}>MA60</span>
+        <span className="text-sky-500">布林通道</span>
       </div>
       <div ref={containerRef} className="h-[420px] w-full" />
     </div>

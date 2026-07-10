@@ -17,7 +17,7 @@
 |------|---------|--------|
 | A. 個股走勢呈現 | K 線圖 / 折線圖、技術指標疊圖（MA、KD、MACD、RSI、布林通道）、成交量 | P0 |
 | A2. 雙市場切換 | 全站頂部 Radio Button 切換「台股 / 美股」，切換後所有頁面（走勢、比較、折溢價、模擬交易）都套用該市場的股票池與交易規則 | P0 |
-| B. AI 分析與策略建議 | 串接 Claude API，綜合技術面＋籌碼面＋新聞面產生分析報告、買賣建議與信心分數 | P0 |
+| B. AI 分析與策略建議 | 串接 Gemini/Gemma，綜合技術面＋籌碼面＋新聞面產生分析報告、買賣建議與信心分數 | P0 |
 | C. 走勢預測 | 兩層並行：(1) 統計/量化模型預測區間（如 Prophet、簡單回歸）；(2) AI 情境推演（樂觀/中性/悲觀三情境） | P1 |
 | D. 報酬率比較 | 多股票報酬率列表（日/週/月/YTD/年化）＋正規化折線圖疊加比較 | P0 |
 | E. 折溢價分析 | ETF 市價 vs 淨值（NAV）折溢價率列表、歷史折溢價走勢圖、異常折溢價警示 | P1 |
@@ -72,7 +72,7 @@
 | 部署 | 方案 A：本機 Docker Compose（預設）；方案 B：Vercel＋Render Free＋Neon＋GitHub Actions cron | 兩案皆 $0，見 [SD.md §6](docs/SD.md) |
 | AI | **Gemini API 免費額度**（`gemini-3.1-flash-lite` 批次主力、`gemini-3.5-flash` 深度分析、`gemma-4-31b-it` 大額度備援），全雲端同一把 key；經 AI Provider 抽象層可隨時換供應商 | 免費、支援結構化輸出 |
 | 台股行情 | FinMind（免費有 API）＋ TWSE/TPEX OpenAPI（折溢價、官方資料） | 免費、涵蓋日線與基本面 |
-| 美股行情 | yfinance（日線、ETF NAV）＋ Stooq（備援） | 免費、無需 API key |
+| 美股行情 | yfinance（日線、ETF NAV）＋ FinMind USStockPrice（備援） | 免費、雲端 IP 限流時可降級 |
 | 排程 | APScheduler（每日收盤後更新資料、觸發 AI 模擬交易） | 輕量夠用 |
 
 ### 2.2 關鍵設計原則
@@ -203,41 +203,41 @@ watchlists       自選股清單
 ## 6. 開發階段（Milestones）
 
 ### Phase 0：專案骨架（~2 天）
-- [ ] Monorepo 結構：`frontend/`（Next.js）＋ `backend/`（FastAPI）
-- [ ] SQLite schema + Repository 層 + Alembic migration
-- [ ] 統一 API 回應格式、錯誤處理中介層
-- [ ] 環境變數管理（`GEMINI_API_KEY`、`FINMIND_TOKEN`，選配 `OPENROUTER_API_KEY`，啟動時驗證）
-- [ ] `MarketDataProvider` 與 `AIProvider` 抽象介面定義
+- [x] Monorepo 結構：`frontend/`（Next.js）＋ `backend/`（FastAPI）
+- [x] SQLite/PostgreSQL schema + SQLAlchemy + Alembic migration
+- [x] 統一 API 回應格式、錯誤處理與 Bearer Token 保護
+- [x] 環境變數管理（`GEMINI_API_KEY`、`FINMIND_TOKEN`、`API_TOKEN` 等）
+- [x] `MarketDataProvider`、`MarketDataGateway` 與 `AIProvider` 抽象
 
 ### Phase 1：行情資料與走勢呈現（~1.5 週）→ 功能 A、A2
-- [ ] 台股 Provider：FinMind/TWSE（日線、法人、ETF 淨值）
-- [ ] 美股 Provider：yfinance（日線、ETF NAV）
-- [ ] 每日排程更新（兩市場各依其收盤時間：台股 14:00 後、美股台灣時間早上）
-- [ ] 技術指標計算服務（MA/KD/MACD/RSI/布林，市場無關）
-- [ ] 前端全域市場 Radio Button 切換（Zustand + URL query）
-- [ ] 個股頁 K 線圖＋指標疊圖＋成交量（兩市場共用元件）
-- [ ] 股票搜尋與自選清單（依市場隔離）
+- [x] 台股 Provider：FinMind/TWSE（日線、法人、ETF 淨值）
+- [x] 美股 Provider：yfinance（日線、ETF NAV）＋ FinMind 備援
+- [x] 每日排程更新（兩市場依收盤時間）
+- [x] 技術指標計算服務（MA/KD/MACD/RSI/布林）
+- [x] 前端全域市場切換（Zustand + URL query）
+- [x] 個股頁 K 線、成交量、布林通道與 RSI/KD/MACD 副圖
+- [x] 股票搜尋、自選清單、群組與排序（依市場隔離）
 
 ### Phase 2：AI 分析與報酬率比較（~1 週）→ 功能 B、D
-- [ ] Gemini Provider（flash-lite / 3.5-flash，structured output）＋ Gemma 4 Provider（fallback）
-- [ ] 節流器、分析快取、用量記錄
-- [ ] 分析管線（輸入組裝、結構化報告落地）
-- [ ] 個股頁 AI 報告卡 UI
-- [ ] 比較頁：報酬率列表＋正規化折線圖（同市場內比較；跨市場比較用報酬率 % 正規化，不換匯）
+- [x] Gemini Provider（flash-lite / 3.5-flash，structured output）＋ Gemma 4 fallback
+- [x] RPD/RPM/TPM 節流、分析快取、用量記錄
+- [x] 分析管線（輸入組裝、結構化報告落地）
+- [x] 個股頁 AI 報告卡 UI
+- [x] 同市場報酬率列表＋正規化折線圖
 
 ### Phase 3：折溢價與走勢預測（~1 週）→ 功能 C、E
-- [ ] ETF 折溢價每日計算＋歷史走勢圖＋列表排序（台股：TWSE 淨值；美股：yfinance NAV，部分 ETF 無 NAV 時顯示「不適用」）
-- [ ] 量化預測（回歸通道/Prophet）＋圖上預測帶
-- [ ] AI 三情境推演整合進報告
+- [x] ETF 折溢價每日計算、歷史走勢圖與列表排序
+- [x] 交易所日曆感知的量化回歸通道預測帶
+- [x] AI 三情境推演整合進報告
 
 ### Phase 4：AI 模擬買賣（~1.5 週）→ 功能 F
-- [ ] 模擬帳戶與委託撮合（以收盤價/隔日開盤價成交；台股整張 1000 股＋零股、美股 1 股起且可小數股）
-- [ ] AI 自動決策排程（兩市場各自收盤後執行）＋風控硬規則
-- [ ] 模擬交易面板（權益曲線、持倉、含理由的交易日誌）
+- [x] 模擬帳戶與隔日開盤撮合（原子 claim、防重單、防賣超）
+- [x] AI 自動決策排程與風控硬規則
+- [x] 模擬交易面板（權益曲線、持倉、含理由的交易日誌）
 
 ### Phase 5：回測與警示（P2，視需求）→ 功能 G、H
-- [ ] backtesting.py 整合、策略績效報告
-- [ ] 價格/折溢價警示通知
+- [x] 內建 MA/RSI/布林回測引擎，含滑價、Sharpe、最大回撤與績效報告
+- [x] 價格/折溢價警示事件與選配 webhook 通知
 
 ### Phase 6：新聞面研究（P2）→ §4.0 Antigravity 分工（2026-07-09 完成）
 - [x] `AntigravityProvider`（Interactions API：background 建立＋輪詢，quota 檢查與用量記錄）

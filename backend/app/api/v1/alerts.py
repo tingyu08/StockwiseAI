@@ -2,14 +2,14 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.envelope import Envelope, ok
 from app.core.exceptions import NotFoundError
 from app.models import Stock
-from app.models.alert import ALERT_KINDS, Alert, AlertEvent
+from app.models.alert import Alert, AlertEvent
 
 router = APIRouter(tags=["alerts"])
 
@@ -31,23 +31,33 @@ class CreateAlertBody(BaseModel):
 
 
 @router.get("/alerts", response_model=Envelope)
-async def list_alerts(
+def list_alerts(
     market: Literal["TW", "US"] = Query(...), db: Session = Depends(get_db)
 ) -> Envelope:
+    latest_events = (
+        select(
+            AlertEvent.alert_id,
+            func.max(AlertEvent.trade_date).label("latest_date"),
+        )
+        .group_by(AlertEvent.alert_id)
+        .subquery()
+    )
     rows = db.execute(
-        select(Alert, Stock)
+        select(Alert, Stock, AlertEvent)
         .join(Stock, Alert.stock_id == Stock.id)
+        .outerjoin(latest_events, latest_events.c.alert_id == Alert.id)
+        .outerjoin(
+            AlertEvent,
+            and_(
+                AlertEvent.alert_id == Alert.id,
+                AlertEvent.trade_date == latest_events.c.latest_date,
+            ),
+        )
         .where(Stock.market == market)
         .order_by(Alert.created_at.desc())
     ).all()
     out = []
-    for alert, stock in rows:
-        last_event = db.execute(
-            select(AlertEvent)
-            .where(AlertEvent.alert_id == alert.id)
-            .order_by(AlertEvent.trade_date.desc())
-            .limit(1)
-        ).scalar_one_or_none()
+    for alert, stock, last_event in rows:
         out.append(
             {
                 "id": alert.id,
@@ -69,7 +79,7 @@ async def list_alerts(
 
 
 @router.post("/alerts", response_model=Envelope)
-async def create_alert(body: CreateAlertBody, db: Session = Depends(get_db)) -> Envelope:
+def create_alert(body: CreateAlertBody, db: Session = Depends(get_db)) -> Envelope:
     stock = db.execute(
         select(Stock).where(Stock.market == body.market, Stock.symbol == body.symbol)
     ).scalar_one_or_none()
@@ -84,7 +94,7 @@ async def create_alert(body: CreateAlertBody, db: Session = Depends(get_db)) -> 
 
 
 @router.delete("/alerts/{alert_id}", response_model=Envelope)
-async def delete_alert(alert_id: int, db: Session = Depends(get_db)) -> Envelope:
+def delete_alert(alert_id: int, db: Session = Depends(get_db)) -> Envelope:
     alert = db.get(Alert, alert_id)
     if alert is None:
         raise NotFoundError("查無此警示")

@@ -24,5 +24,9 @@ services:
         sync: false
       - key: JOB_TOKEN
         generateValue: true      # Render 自動產生；複製到 GitHub secrets
+      - key: API_TOKEN
+        generateValue: true      # 複製此值，從前端右上角 API Token 輸入
+      - key: ALERT_WEBHOOK_URL
+        sync: false              # 選配：Slack/Discord/自建 webhook
       - key: CORS_ORIGINS
         sync: false              # Vercel 網域，如 https://stockwise.vercel.app

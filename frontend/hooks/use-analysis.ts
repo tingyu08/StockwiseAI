@@ -2,10 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet, ApiError } from "@/lib/api";
+import { apiGet, apiRequest, ApiError } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8123";
 
 export interface Scenario {
   target_price: number;
@@ -60,15 +58,10 @@ function useRunAnalysis(kind: "routine" | "deep", symbol: string) {
   const market = useMarketStore((s) => s.market);
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async () => {
-      const res = await fetch(
-        `${API_BASE}/api/v1/stocks/${symbol}/analysis:${kind}?market=${market.toUpperCase()}`,
-        { method: "POST" },
-      );
-      const body = await res.json();
-      if (!body.success) throw new Error(body.error ?? "分析失敗");
-      return body.data as AnalysisData;
-    },
+    mutationFn: () => apiRequest<AnalysisData>(
+      `/stocks/${symbol}/analysis:${kind}`,
+      { method: "POST", market },
+    ),
     onSuccess: (data) => {
       qc.setQueryData(["analysis", market, symbol], data);
       qc.invalidateQueries({ queryKey: ["usage"] });

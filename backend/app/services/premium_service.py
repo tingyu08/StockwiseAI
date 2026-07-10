@@ -9,7 +9,7 @@ import logging
 from datetime import date, datetime
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import UpstreamError
@@ -105,17 +105,25 @@ async def _us_snapshot(symbols: list[str]) -> dict[str, tuple[float, float, date
 
 def premium_list(db: Session, market: str) -> list[dict]:
     """各追蹤 ETF 的最新折溢價（無資料者標示 not available）。"""
-    etfs = db.execute(
-        select(Stock).where(Stock.market == market, Stock.kind == "etf")
-    ).scalars().all()
+    latest_dates = (
+        select(EtfNav.stock_id, func.max(EtfNav.date).label("latest_date"))
+        .group_by(EtfNav.stock_id)
+        .subquery()
+    )
+    rows = db.execute(
+        select(Stock, EtfNav)
+        .outerjoin(latest_dates, latest_dates.c.stock_id == Stock.id)
+        .outerjoin(
+            EtfNav,
+            and_(
+                EtfNav.stock_id == Stock.id,
+                EtfNav.date == latest_dates.c.latest_date,
+            ),
+        )
+        .where(Stock.market == market, Stock.kind == "etf")
+    ).all()
     out = []
-    for etf in etfs:
-        latest = db.execute(
-            select(EtfNav)
-            .where(EtfNav.stock_id == etf.id)
-            .order_by(EtfNav.date.desc())
-            .limit(1)
-        ).scalar_one_or_none()
+    for etf, latest in rows:
         out.append(
             {
                 "symbol": etf.symbol,

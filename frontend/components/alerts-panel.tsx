@@ -4,10 +4,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { useWatchlist } from "@/hooks/use-stocks";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiRequest } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8123";
 
 interface AlertRow {
   id: number;
@@ -41,21 +39,15 @@ export function AlertsPanel() {
   const [threshold, setThreshold] = useState("");
 
   const create = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/api/v1/alerts`, {
+    mutationFn: () => apiRequest("/alerts", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: {
           market: market.toUpperCase(),
           symbol,
           kind,
           threshold: Number(threshold),
-        }),
-      });
-      const body = await res.json();
-      if (!body.success) throw new Error(body.error ?? "新增失敗");
-      return body.data;
-    },
+        },
+      }),
     onSuccess: () => {
       setThreshold("");
       qc.invalidateQueries({ queryKey: ["alerts", market] });
@@ -63,11 +55,7 @@ export function AlertsPanel() {
   });
 
   const remove = useMutation({
-    mutationFn: async (id: number) => {
-      const res = await fetch(`${API_BASE}/api/v1/alerts/${id}`, { method: "DELETE" });
-      const body = await res.json();
-      if (!body.success) throw new Error(body.error ?? "刪除失敗");
-    },
+    mutationFn: (id: number) => apiRequest(`/alerts/${id}`, { method: "DELETE" }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["alerts", market] }),
   });
 

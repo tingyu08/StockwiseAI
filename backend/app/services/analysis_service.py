@@ -15,7 +15,7 @@ from app.models import AiReport, DailyPrice, Indicator, Stock
 from app.providers.ai import router as ai_router
 from app.providers.ai.base import AnalysisContext
 from app.providers.ai.gemini import PROMPT_VERSION
-from app.providers.market.registry import get_provider
+from app.services.market_gateway import market_data
 
 if TYPE_CHECKING:
     from app.models import AiOverview
@@ -385,9 +385,8 @@ def _report_exists(db: Session, stock_id: int, trade_date: date, kind: str) -> b
 
 async def _tw_flow_summary(stock: Stock) -> str:
     try:
-        provider = get_provider("TW")
-        rows = await provider.get_institutional_flows(
-            stock.symbol, date.today() - timedelta(days=14), date.today()
+        rows = await market_data.get_institutional_flows(
+            "TW", stock.symbol, date.today() - timedelta(days=14), date.today()
         )
         if not rows:
             return ""

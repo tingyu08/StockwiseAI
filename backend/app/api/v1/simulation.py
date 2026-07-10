@@ -1,13 +1,13 @@
 import json
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
 from app.core.envelope import Envelope, ok
-from app.models import AiReport, SimAccount, SimOrder, Stock
+from app.models import AiReport, SimOrder, Stock
 from app.services.sim.decision import run_decisions
 from app.services.sim.engine import fill_pending_orders, get_or_create_account
 from app.services.sim.portfolio import equity_curve, positions_dto
@@ -18,7 +18,7 @@ Market = Literal["TW", "US"]
 
 
 @router.get("/simulation/{market}/account", response_model=Envelope)
-async def account_view(market: Market, db: Session = Depends(get_db)) -> Envelope:
+def account_view(market: Market, db: Session = Depends(get_db)) -> Envelope:
     account = get_or_create_account(db, market)
     positions = positions_dto(db, account)
     curve = equity_curve(db, account)
@@ -42,7 +42,7 @@ async def account_view(market: Market, db: Session = Depends(get_db)) -> Envelop
 
 
 @router.get("/simulation/{market}/orders", response_model=Envelope)
-async def orders_view(market: Market, db: Session = Depends(get_db)) -> Envelope:
+def orders_view(market: Market, db: Session = Depends(get_db)) -> Envelope:
     account = get_or_create_account(db, market)
     rows = db.execute(
         select(SimOrder, Stock)
@@ -93,6 +93,6 @@ async def trigger_decisions(market: Market, db: Session = Depends(get_db)) -> En
 
 
 @router.post("/simulation/{market}:fill", response_model=Envelope)
-async def trigger_fill(market: Market, db: Session = Depends(get_db)) -> Envelope:
+def trigger_fill(market: Market, db: Session = Depends(get_db)) -> Envelope:
     """手動觸發撮合（正式流程於每日資料同步後執行）。"""
     return ok(fill_pending_orders(db, market))

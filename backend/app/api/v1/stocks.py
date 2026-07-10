@@ -10,7 +10,7 @@ from app.core.db import get_db
 from app.core.envelope import Envelope, ok
 from app.core.exceptions import NotFoundError
 from app.models import DailyPrice, Indicator, Stock
-from app.providers.market.registry import get_provider
+from app.services.market_gateway import market_data
 from app.services.sync_service import ensure_stock, sync_prices
 
 router = APIRouter(tags=["stocks"])
@@ -40,7 +40,7 @@ async def search_stocks(
     if local:
         return ok([_stock_dto(s) for s in local])
 
-    remote = await get_provider(market).search_stocks(q.strip())
+    remote = await market_data.search_stocks(market, q.strip())
     return ok([
         {"symbol": r.symbol, "market": market, "name": r.name,
          "currency": r.currency, "kind": r.kind, "tracked": False}

@@ -3,9 +3,8 @@ from datetime import date, timedelta
 import pytest
 
 from app.core.db import SessionLocal
-from app.core.exceptions import NotFoundError
 from app.models import DailyPrice, Stock
-from app.services.compare_service import _annualized, _trailing_return, _volatility, compare
+from app.services.compare_service import _annualized, _trailing_return, _volatility
 
 
 def test_trailing_return_golden():

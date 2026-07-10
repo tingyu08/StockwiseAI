@@ -4,7 +4,7 @@ import pytest
 
 from app.core.db import SessionLocal
 from app.models import DailyPrice, Stock
-from app.services.prediction_service import _fit, get_predictions
+from app.services.prediction_service import _fit
 
 
 def test_fit_perfect_line():

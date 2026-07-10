@@ -2,10 +2,12 @@ import json
 from datetime import date, datetime, timedelta
 
 import pytest
+from sqlalchemy.exc import IntegrityError
 
 from app.core.db import SessionLocal
 from app.models import AiReport, DailyPrice, SimOrder, Stock, WatchlistItem
 from app.services.sim.decision import run_decisions
+from app.services.sim import engine as sim_engine
 from app.services.sim.engine import calc_fee, fill_pending_orders, get_or_create_account
 from app.services.sim.portfolio import current_positions, equity_curve
 
@@ -150,4 +152,79 @@ def test_equity_curve_replay(client):
         # 漲到 110 後：+1000 × 10 = +10000
         assert curve[-1]["equity"] == pytest.approx(initial - 142.5 + 10_000, abs=0.01)
     finally:
+        db.close()
+
+
+def test_only_one_pending_order_per_account_and_stock(client):
+    db = SessionLocal()
+    try:
+        stock = _seed_stock(db, "8010")
+        account = get_or_create_account(db, "TW")
+        db.add_all([
+            SimOrder(
+                account_id=account.id, stock_id=stock.id, side="buy", qty=1,
+                status="pending", decided_by="ai",
+            ),
+            SimOrder(
+                account_id=account.id, stock_id=stock.id, side="buy", qty=1,
+                status="pending", decided_by="ai",
+            ),
+        ])
+
+        with pytest.raises(IntegrityError):
+            db.commit()
+        db.rollback()
+    finally:
+        db.close()
+
+
+def test_sell_order_cannot_fill_more_than_current_position(client):
+    db = SessionLocal()
+    try:
+        stock = _seed_stock(db, "8011")
+        account = get_or_create_account(db, "TW")
+        cash_before = float(account.cash)
+        db.add(SimOrder(
+            account_id=account.id, stock_id=stock.id, side="buy", qty=10,
+            fill_price=100, fee=20, status="filled", decided_by="ai",
+            filled_at=datetime.now() - timedelta(days=130),
+        ))
+        sell = SimOrder(
+            account_id=account.id, stock_id=stock.id, side="sell", qty=15,
+            status="pending", decided_by="ai",
+            created_at=datetime.now() - timedelta(days=120),
+        )
+        db.add(sell)
+        db.commit()
+
+        result = fill_pending_orders(db, "TW")
+
+        db.refresh(sell)
+        db.refresh(account)
+        assert result["rejected"] == 1
+        assert sell.status == "rejected"
+        assert sell.reject_reason == "賣出數量超過目前持倉"
+        assert float(account.cash) == cash_before
+        assert current_positions(db, account)[stock.id] == 10
+    finally:
+        db.close()
+
+
+def test_pending_order_can_be_claimed_only_once(client):
+    db = SessionLocal()
+    try:
+        stock = _seed_stock(db, "8012")
+        account = get_or_create_account(db, "TW")
+        order = SimOrder(
+            account_id=account.id, stock_id=stock.id, side="buy", qty=1,
+            status="pending", decided_by="ai",
+        )
+        db.add(order)
+        db.commit()
+        claim = getattr(sim_engine, "_claim_pending_order", lambda *_: False)
+
+        assert claim(db, order.id) is True
+        assert claim(db, order.id) is False
+    finally:
+        db.rollback()
         db.close()

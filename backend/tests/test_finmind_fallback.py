@@ -2,6 +2,8 @@
 from datetime import date
 from types import SimpleNamespace
 
+import pandas as pd
+
 from app.providers.market import finmind_us
 
 US_BODY = {
@@ -90,3 +92,29 @@ async def test_us_provider_falls_back(monkeypatch):
     rows = await YFinanceProvider().get_daily_prices("SPY", date(2026, 7, 1), date(2026, 7, 9))
     assert len(rows) == 2
     assert rows[-1].close == 744.8
+
+
+async def test_us_provider_falls_back_when_yfinance_returns_empty(monkeypatch):
+    from app.providers.market.yfinance_us import YFinanceProvider, yf
+
+    class _Empty:
+        def __init__(self, *a):
+            pass
+
+        def history(self, **kw):
+            return pd.DataFrame()
+
+    fallback = pd.DataFrame({
+        "Date": pd.to_datetime(["2026-07-09"]),
+        "Open": [747.4], "High": [751.3], "Low": [740.0],
+        "Close": [744.8], "Volume": [57447800],
+    })
+    monkeypatch.setattr(yf, "Ticker", _Empty)
+    monkeypatch.setattr(finmind_us, "fetch_daily", lambda *a, **kw: fallback)
+
+    rows = await YFinanceProvider().get_daily_prices(
+        "SPY", date(2026, 7, 1), date(2026, 7, 9)
+    )
+
+    assert len(rows) == 1
+    assert rows[0].close == 744.8

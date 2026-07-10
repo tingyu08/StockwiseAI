@@ -15,10 +15,8 @@ import {
 
 import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import { useWatchlist } from "@/hooks/use-stocks";
-import { apiGet } from "@/lib/api";
+import { apiGet, apiRequest } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8123";
 
 interface BacktestResult {
   strategy: string;
@@ -32,7 +30,9 @@ interface BacktestResult {
     trades: number;
     buy_hold_return_pct: number;
     beats_buy_hold: number;
+    sharpe_ratio: number | null;
   };
+  assumptions: { slippage_bps: number };
   equity_curve: { date: string; equity: number }[];
   trades: {
     entry_date: string;
@@ -61,23 +61,19 @@ export default function BacktestPage() {
   const [symbol, setSymbol] = useState("");
   const [strategy, setStrategy] = useState("ma_cross");
   const [rangeDays, setRangeDays] = useState(365);
+  const [slippageBps, setSlippageBps] = useState(5);
 
   const run = useMutation({
-    mutationFn: async () => {
-      const res = await fetch(`${API_BASE}/api/v1/backtest`, {
+    mutationFn: () => apiRequest<BacktestResult>("/backtest", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
+        body: {
           market: market.toUpperCase(),
           symbol,
           strategy,
           range_days: rangeDays,
-        }),
-      });
-      const body = await res.json();
-      if (!body.success) throw new Error(body.error ?? "回測失敗");
-      return body.data as BacktestResult;
-    },
+          slippage_bps: slippageBps,
+        },
+      }),
   });
 
   const result = run.data;
@@ -101,6 +97,17 @@ export default function BacktestPage() {
                 </option>
               ))}
             </select>
+          </label>
+          <label className="text-sm">
+            <span className="mb-1 block text-xs text-neutral-500">滑價（bps）</span>
+            <input
+              type="number"
+              min={0}
+              max={200}
+              value={slippageBps}
+              onChange={(event) => setSlippageBps(Number(event.target.value))}
+              className="w-24 rounded-lg border border-neutral-300 bg-transparent px-3 py-2 dark:border-neutral-700"
+            />
           </label>
           <label className="text-sm">
             <span className="mb-1 block text-xs text-neutral-500">策略</span>
@@ -145,6 +152,7 @@ export default function BacktestPage() {
             <Metric label="年化" value={result.metrics.annualized_pct != null ? `${result.metrics.annualized_pct}%` : "—"} />
             <Metric label="最大回撤" value={`-${result.metrics.max_drawdown_pct}%`} negative />
             <Metric label="勝率" value={result.metrics.win_rate_pct != null ? `${result.metrics.win_rate_pct}%` : "—"} />
+            <Metric label="Sharpe" value={result.metrics.sharpe_ratio?.toFixed(2) ?? "—"} />
             <Metric label="交易次數" value={String(result.metrics.trades)} />
             <Metric label="買入持有" value={`${result.metrics.buy_hold_return_pct}%`} />
             <Metric

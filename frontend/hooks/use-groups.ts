@@ -2,10 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet } from "@/lib/api";
+import { apiGet, apiRequest } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8123";
 
 export interface Group {
   id: number;
@@ -16,17 +14,6 @@ export interface ReorderItem {
   symbol: string;
   group_id: number | null;
   sort_order: number;
-}
-
-async function post(path: string, method: string, body?: unknown) {
-  const res = await fetch(`${API_BASE}/api/v1${path}`, {
-    method,
-    headers: { "Content-Type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const json = await res.json();
-  if (!json.success) throw new Error(json.error ?? "操作失敗");
-  return json.data;
 }
 
 export function useGroups() {
@@ -42,7 +29,9 @@ export function useCreateGroup() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (name: string) =>
-      post("/groups", "POST", { market: market.toUpperCase(), name }),
+      apiRequest<Group>("/groups", {
+        method: "POST", body: { market: market.toUpperCase(), name },
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["groups", market] }),
   });
 }
@@ -52,7 +41,7 @@ export function useRenameGroup() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, name }: { id: number; name: string }) =>
-      post(`/groups/${id}`, "PATCH", { name }),
+      apiRequest<Group>(`/groups/${id}`, { method: "PATCH", body: { name } }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["groups", market] }),
   });
 }
@@ -61,7 +50,7 @@ export function useDeleteGroup() {
   const market = useMarketStore((s) => s.market);
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: number) => post(`/groups/${id}`, "DELETE"),
+    mutationFn: (id: number) => apiRequest(`/groups/${id}`, { method: "DELETE" }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["groups", market] });
       qc.invalidateQueries({ queryKey: ["watchlist", market] });
@@ -74,7 +63,9 @@ export function useReorderWatchlist() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (items: ReorderItem[]) =>
-      post("/watchlist/reorder", "PUT", { market: market.toUpperCase(), items }),
+      apiRequest("/watchlist/reorder", {
+        method: "PUT", body: { market: market.toUpperCase(), items },
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["watchlist", market] }),
   });
 }
@@ -84,11 +75,11 @@ export function useSetGroup() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ symbol, groupId }: { symbol: string; groupId: number | null }) =>
-      post(
-        `/watchlist/${symbol}?market=${market.toUpperCase()}`,
-        "PATCH",
-        groupId === null ? { clear_group: true } : { group_id: groupId },
-      ),
+      apiRequest(`/watchlist/${symbol}`, {
+        method: "PATCH",
+        market,
+        body: groupId === null ? { clear_group: true } : { group_id: groupId },
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["watchlist", market] }),
   });
 }
@@ -148,7 +139,7 @@ export function useRunOverview() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: () =>
-      post(`/analysis/overview:run?market=${market.toUpperCase()}`, "POST"),
+      apiRequest<OverviewData>("/analysis/overview:run", { method: "POST", market }),
     onSuccess: (data) => {
       qc.setQueryData(["overview", market], data);
       qc.invalidateQueries({ queryKey: ["usage"] });

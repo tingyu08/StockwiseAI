@@ -14,7 +14,7 @@ router = APIRouter(tags=["premium"])
 
 
 @router.get("/premium", response_model=Envelope)
-async def list_premium(
+def list_premium(
     market: Literal["TW", "US"] = Query(...), db: Session = Depends(get_db)
 ) -> Envelope:
     return ok(premium_service.premium_list(db, market))
@@ -29,7 +29,7 @@ async def refresh_premium(
 
 
 @router.get("/premium/{symbol}/history", response_model=Envelope)
-async def premium_history(
+def premium_history(
     symbol: str,
     market: Literal["TW", "US"] = Query(...),
     db: Session = Depends(get_db),

@@ -7,7 +7,7 @@ AI 股票分析與模擬交易平台（台股＋美股）。免費 AI（Gemini/G
 
 | 文件 | 內容 |
 |------|------|
-| [PLAN.md](PLAN.md) | 產品計畫：功能、AI 配額策略、開發階段 |
+| [docs/PLAN.md](docs/PLAN.md) | 產品計畫：功能、AI 配額策略、開發階段 |
 | [docs/SA.md](docs/SA.md) | 系統分析：使用案例、功能/非功能需求 |
 | [docs/SD.md](docs/SD.md) | 系統設計：ADR、架構、API 規格、DB Schema、部署 |
 
@@ -36,7 +36,29 @@ npm run dev                          # http://localhost:3000
 
 # 測試
 cd backend && pytest
+
+# 完整驗證
+cd backend && pytest -q && ruff check app tests
+cd ../frontend && npm test && npm run lint && npm run build
 ```
+
+## 安全與通知
+
+- 公開部署時請設定 `API_TOKEN`。除 `/health` 與帶 `X-Job-Token` 的排程觸發外，API 會要求 `Authorization: Bearer <token>`。
+- 前端右上角的「API Token」按鈕只將 token 保存在當次瀏覽器 session。
+- 設定 `ALERT_WEBHOOK_URL` 後，價格與 ETF 折溢價警示會以 JSON webhook 送出。
+- 外部排程會寫入 `job_runs`，可查詢 queued/running/succeeded/failed 狀態並重試失敗工作。
+
+## 主要功能
+
+- 台股／美股搜尋、自選群組與拖曳排序
+- K 線、成交量、MA、布林通道、RSI、KD、MACD
+- Gemini/Gemma 結構化分析與 Antigravity 新聞研究
+- 交易所日曆感知的 5／20 日回歸通道預測
+- 多股績效比較與 ETF 折溢價歷史
+- 具持倉限制、原子撮合與交易成本的 AI 模擬交易
+- MA、RSI、布林策略回測，包含滑價、Sharpe、最大回撤及勝率
+- 價格／折溢價警示、資料新鮮度與 AI 額度監控
 
 ## 部署路線（已定案）
 

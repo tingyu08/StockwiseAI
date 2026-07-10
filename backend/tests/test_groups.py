@@ -34,7 +34,7 @@ def test_group_crud_and_assignment(client):
     assert res.status_code == 409
 
     # 指派群組
-    res = client.patch(f"/api/v1/watchlist/6001?market=TW", json={"group_id": gid})
+    res = client.patch("/api/v1/watchlist/6001?market=TW", json={"group_id": gid})
     assert res.json()["data"]["group_id"] == gid
 
     # 排序
@@ -65,3 +65,49 @@ def test_group_crud_and_assignment(client):
 def test_overview_404_when_none(client):
     res = client.get("/api/v1/analysis/overview?market=US")
     assert res.status_code == 404
+
+
+def test_watchlist_rejects_group_from_another_market(client):
+    db = SessionLocal()
+    try:
+        _seed_watch(db, "6101", market="TW")
+    finally:
+        db.close()
+    group = client.post("/api/v1/groups", json={"market": "US", "name": "US group"})
+    group_id = group.json()["data"]["id"]
+
+    response = client.patch(
+        "/api/v1/watchlist/6101?market=TW",
+        json={"group_id": group_id},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == "群組與自選股市場不一致"
+
+
+def test_reorder_rejects_foreign_market_group_without_partial_update(client):
+    db = SessionLocal()
+    try:
+        _seed_watch(db, "6102", market="TW")
+        _seed_watch(db, "6103", market="TW")
+    finally:
+        db.close()
+    group = client.post("/api/v1/groups", json={"market": "US", "name": "US reorder"})
+    group_id = group.json()["data"]["id"]
+
+    response = client.put(
+        "/api/v1/watchlist/reorder",
+        json={
+            "market": "TW",
+            "items": [
+                {"symbol": "6102", "group_id": None, "sort_order": 99},
+                {"symbol": "6103", "group_id": group_id, "sort_order": 100},
+            ],
+        },
+    )
+
+    assert response.status_code == 400
+    rows = client.get("/api/v1/watchlist?market=TW").json()["data"]
+    by_symbol = {row["symbol"]: row for row in rows}
+    assert by_symbol["6102"]["sort_order"] == 0
+    assert by_symbol["6103"]["sort_order"] == 0

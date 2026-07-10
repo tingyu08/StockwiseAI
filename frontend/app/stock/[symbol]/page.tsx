@@ -5,6 +5,7 @@ import { use, useState } from "react";
 import { NewsCard } from "@/components/analysis/news-card";
 import { ReportCard } from "@/components/analysis/report-card";
 import { CandlestickChart } from "@/components/charts/candlestick";
+import { TechnicalIndicatorsChart } from "@/components/charts/technical-indicators";
 import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import { usePredictions } from "@/hooks/use-premium";
 import { usePrices } from "@/hooks/use-stocks";
@@ -86,6 +87,7 @@ export default function StockPage({
             market={market}
             prediction={showPrediction ? prediction?.horizons["20"] : undefined}
           />
+          <TechnicalIndicatorsChart data={data.series} />
           <FreshnessNote>{FRESHNESS.prices}</FreshnessNote>
         </div>
       )}

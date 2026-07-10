@@ -6,13 +6,14 @@ UI 一律以「區間帶」呈現，絕不給單點預測。
 """
 import json
 import math
-from datetime import date, timedelta
+from datetime import date
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError
 from app.models import DailyPrice, Prediction, Stock
+from app.services.trading_calendar import next_trading_dates
 
 LOOKBACK = 60
 HORIZONS = (5, 20)
@@ -48,13 +49,9 @@ def get_predictions(db: Session, stock: Stock) -> dict:
     result: dict[int, list[dict]] = {}
     for horizon in HORIZONS:
         band = []
-        future_date = trade_date
-        step = 0
-        while len(band) < horizon:
-            future_date += timedelta(days=1)
-            if future_date.weekday() >= 5:  # 跳過週末（假日不處理，屬近似）
-                continue
-            step += 1
+        for step, future_date in enumerate(
+            next_trading_dates(stock.market, trade_date, horizon), start=1
+        ):
             mid = intercept + slope * (n - 1 + step)
             band.append(
                 {

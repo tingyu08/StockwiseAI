@@ -9,10 +9,11 @@
 import logging
 from datetime import datetime
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models import DailyPrice, SimAccount, SimOrder, Stock
+from app.services.sim.portfolio import current_positions
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +58,7 @@ def fill_pending_orders(db: Session, market: str) -> dict:
     現金不足（開盤價高於決策時估價）→ 縮量成交；縮到 0 → rejected。
     """
     account = get_or_create_account(db, market)
+    positions = current_positions(db, account)
     pending = db.execute(
         select(SimOrder, Stock)
         .join(Stock, SimOrder.stock_id == Stock.id)
@@ -67,6 +69,9 @@ def fill_pending_orders(db: Session, market: str) -> dict:
 
     filled = rejected = waiting = 0
     for order, stock in pending:
+        if not _claim_pending_order(db, order.id):
+            continue
+        order.status = "filling"
         price_row = db.execute(
             select(DailyPrice)
             .where(
@@ -78,6 +83,7 @@ def fill_pending_orders(db: Session, market: str) -> dict:
             .limit(1)
         ).scalar_one_or_none()
         if price_row is None:
+            order.status = "pending"
             waiting += 1  # 下一個交易日資料尚未同步
             continue
 
@@ -100,6 +106,11 @@ def fill_pending_orders(db: Session, market: str) -> dict:
             fee = calc_fee(market, "buy", gross)
             account.cash = float(account.cash) - gross - fee
         else:
+            held_qty = positions.get(stock.id, 0.0)
+            if qty > held_qty + 1e-9:
+                _reject(order, "賣出數量超過目前持倉")
+                rejected += 1
+                continue
             gross = qty * open_price
             fee = calc_fee(market, "sell", gross)
             account.cash = float(account.cash) + gross - fee
@@ -109,6 +120,8 @@ def fill_pending_orders(db: Session, market: str) -> dict:
         order.fee = fee
         order.status = "filled"
         order.filled_at = datetime.combine(price_row.date, datetime.min.time())
+        delta = qty if order.side == "buy" else -qty
+        positions[stock.id] = round(positions.get(stock.id, 0.0) + delta, 4)
         filled += 1
         logger.info(
             "filled %s %s %s x%.2f @ %.2f fee=%.2f",
@@ -122,3 +135,14 @@ def fill_pending_orders(db: Session, market: str) -> dict:
 def _reject(order: SimOrder, reason: str) -> None:
     order.status = "rejected"
     order.reject_reason = reason
+
+
+def _claim_pending_order(db: Session, order_id: int) -> bool:
+    """Atomically move one pending order into the in-flight state."""
+    result = db.execute(
+        update(SimOrder)
+        .where(SimOrder.id == order_id, SimOrder.status == "pending")
+        .values(status="filling")
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1

@@ -1,13 +1,16 @@
 from datetime import date, timedelta
+import inspect
 
 import pytest
+import pandas as pd
 from sqlalchemy import select
 
 from app.core.db import SessionLocal
 from app.models import DailyPrice, EtfNav, Stock
 from app.models.alert import Alert, AlertEvent
 from app.services.alert_service import check_alerts
-from app.services.backtest_service import _max_drawdown, run_backtest
+from app.services import backtest_service
+from app.services.backtest_service import _max_drawdown, _simulate, run_backtest
 
 
 def _seed(db, symbol, closes, market="TW", kind="stock"):
@@ -42,7 +45,7 @@ def test_backtest_ma_cross_uptrend(client):
         _seed(db, "7001", closes)
         result = run_backtest(db, "TW", "7001", "ma_cross", range_days=400)
         m = result["metrics"]
-        assert m["trades"] + (1 if result["trades"] and result["trades"][-1]["exit_date"] is None else 0) >= 1
+        assert m["trades"] + (1 if result["open_position"] else 0) >= 1
         assert m["total_return_pct"] > 0
         assert 0 <= m["max_drawdown_pct"] <= 100
         assert len(result["equity_curve"]) == 120
@@ -72,6 +75,44 @@ def test_backtest_insufficient_data(client):
         db.close()
 
 
+def test_backtest_open_position_is_not_counted_as_closed_trade():
+    df = pd.DataFrame({
+        "date": [date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 3)],
+        "open": [100.0, 100.0, 105.0],
+        "close": [100.0, 105.0, 110.0],
+    })
+
+    result = _simulate("US", df, [1, 1, 1], "ma_cross")
+
+    assert result["metrics"]["trades"] == 0
+    assert result["metrics"]["win_rate_pct"] is None
+    assert result["open_position"]["entry_price"] == 100.0
+
+
+def test_backtest_slippage_reduces_strategy_return():
+    df = pd.DataFrame({
+        "date": [date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 3)],
+        "open": [100.0, 100.0, 110.0],
+        "close": [100.0, 105.0, 110.0],
+    })
+
+    if "slippage_bps" not in inspect.signature(_simulate).parameters:
+        pytest.fail("_simulate must accept slippage_bps")
+    without_slippage = _simulate("US", df, [1, 0, 0], "ma_cross", slippage_bps=0)
+    with_slippage = _simulate("US", df, [1, 0, 0], "ma_cross", slippage_bps=100)
+
+    assert with_slippage["metrics"]["total_return_pct"] < without_slippage["metrics"]["total_return_pct"]
+
+
+def test_sharpe_ratio_is_annualized_and_handles_flat_curve():
+    sharpe = getattr(backtest_service, "_sharpe_ratio", None)
+    assert callable(sharpe)
+    if not sharpe:
+        return
+    assert sharpe([1.0, 1.0, 1.0]) is None
+    assert sharpe([1.0, 1.01, 1.03, 1.06]) > 0
+
+
 # ---- 警示 ----
 
 def test_price_alert_triggers_once_per_day(client):
@@ -84,6 +125,8 @@ def test_price_alert_triggers_once_per_day(client):
 
         r1 = check_alerts(db, "TW")
         assert r1["triggered"] == 1
+        assert r1["events"][0]["symbol"] == "7003"
+        assert r1["events"][0]["value"] == 150.0
         r2 = check_alerts(db, "TW")  # 同日重複檢查不重複觸發
         assert r2["triggered"] == 0
 

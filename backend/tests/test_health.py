@@ -19,3 +19,15 @@ def test_usage_lists_all_quota_models(client):
     for row in body["data"]:
         assert row["used"] == 0
         assert row["remaining"] == row["rpd"]
+
+
+def test_data_status_reports_market_freshness(client):
+    response = client.get("/api/v1/data-status")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert set(data) == {"TW", "US"}
+    for market in ("TW", "US"):
+        assert set(data[market]) == {
+            "latest_price_date", "latest_nav_date", "latest_ai_date",
+        }

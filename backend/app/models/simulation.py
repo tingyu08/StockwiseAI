@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, func
+from sqlalchemy import DateTime, ForeignKey, Index, Numeric, String, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -20,6 +20,17 @@ class SimOrder(Base):
     """事件溯源：持倉與權益曲線由 orders 重放推導，不可變更既有紀錄。"""
 
     __tablename__ = "sim_orders"
+    __table_args__ = (
+        Index("ix_sim_orders_account_status_created", "account_id", "status", "created_at"),
+        Index(
+            "uq_sim_orders_pending_account_stock",
+            "account_id",
+            "stock_id",
+            unique=True,
+            sqlite_where=text("status = 'pending'"),
+            postgresql_where=text("status = 'pending'"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("sim_accounts.id"), index=True)
@@ -28,7 +39,7 @@ class SimOrder(Base):
     qty: Mapped[float] = mapped_column(Numeric(16, 4))  # 美股可小數股
     fill_price: Mapped[float | None] = mapped_column(Numeric(16, 4))
     fee: Mapped[float | None] = mapped_column(Numeric(12, 2))
-    status: Mapped[str] = mapped_column(String(8), default="pending")  # pending|filled|rejected
+    status: Mapped[str] = mapped_column(String(8), default="pending")  # pending|filling|filled|rejected
     decided_by: Mapped[str] = mapped_column(String(4))  # 'ai' | 'user'
     ai_report_id: Mapped[int | None] = mapped_column(ForeignKey("ai_reports.id"))
     reject_reason: Mapped[str | None] = mapped_column(String(256))

@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Date, DateTime, ForeignKey, Numeric, String, func
+from sqlalchemy import Date, DateTime, ForeignKey, Index, Numeric, String, func
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.db import Base
@@ -21,6 +21,9 @@ class Alert(Base):
 
 class AlertEvent(Base):
     __tablename__ = "alert_events"
+    __table_args__ = (
+        Index("ix_alert_events_alert_trade_date", "alert_id", "trade_date"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     alert_id: Mapped[int] = mapped_column(ForeignKey("alerts.id"), index=True)

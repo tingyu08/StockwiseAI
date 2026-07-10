@@ -9,8 +9,8 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError
 from app.models import DailyPrice, Indicator, Stock
-from app.providers.market.registry import get_provider
 from app.services.indicator_service import compute_indicators
+from app.services.market_gateway import market_data
 
 logger = logging.getLogger(__name__)
 
@@ -31,8 +31,7 @@ async def ensure_stock(db: Session, market: str, symbol: str) -> Stock:
     if stock:
         return stock
 
-    provider = get_provider(market)
-    matches = await provider.search_stocks(symbol)
+    matches = await market_data.search_stocks(market, symbol)
     info = next((m for m in matches if m.symbol == symbol), None)
     if info is None:
         raise NotFoundError(f"{market} 市場查無代號 {symbol}")
@@ -49,7 +48,6 @@ async def ensure_stock(db: Session, market: str, symbol: str) -> Stock:
 
 async def sync_prices(db: Session, stock: Stock) -> int:
     """增量同步日線並重算指標，回傳新增筆數。"""
-    provider = get_provider(stock.market)
     last: date | None = db.execute(
         select(DailyPrice.date)
         .where(DailyPrice.stock_id == stock.id)
@@ -62,7 +60,7 @@ async def sync_prices(db: Session, stock: Stock) -> int:
     if start > today:
         return 0
 
-    rows = await provider.get_daily_prices(stock.symbol, start, today)
+    rows = await market_data.get_daily_prices(stock.market, stock.symbol, start, today)
     new_rows = [r for r in rows if last is None or r.date > last]
     for r in new_rows:
         db.add(

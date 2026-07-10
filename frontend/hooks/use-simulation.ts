@@ -2,10 +2,8 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet } from "@/lib/api";
+import { apiGet, apiRequest } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
-
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8123";
 
 export interface Position {
   symbol: string;
@@ -51,6 +49,16 @@ export interface SimOrderView {
   } | null;
 }
 
+export interface SimStepResult {
+  orders_created?: number;
+  orders?: { symbol: string; side: string; qty?: number; reason?: string }[];
+  skipped?: { symbol: string; reason: string }[];
+  filled?: number;
+  rejected?: number;
+  waiting?: number;
+  managed?: number;
+}
+
 export function useSimAccount() {
   const market = useMarketStore((s) => s.market);
   return useQuery({
@@ -71,19 +79,10 @@ export function useToggleAiManaged() {
   const market = useMarketStore((s) => s.market);
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ symbol, ai_managed }: { symbol: string; ai_managed: boolean }) => {
-      const res = await fetch(
-        `${API_BASE}/api/v1/watchlist/${symbol}?market=${market.toUpperCase()}`,
-        {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ai_managed }),
-        },
-      );
-      const body = await res.json();
-      if (!body.success) throw new Error(body.error ?? "設定失敗");
-      return body.data;
-    },
+    mutationFn: ({ symbol, ai_managed }: { symbol: string; ai_managed: boolean }) =>
+      apiRequest(`/watchlist/${symbol}`, {
+        method: "PATCH", market, body: { ai_managed },
+      }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["watchlist", market] }),
   });
 }
@@ -92,15 +91,10 @@ export function useRunSimStep() {
   const market = useMarketStore((s) => s.market);
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (step: "decide" | "fill") => {
-      const res = await fetch(
-        `${API_BASE}/api/v1/simulation/${market.toUpperCase()}:${step}`,
-        { method: "POST" },
-      );
-      const body = await res.json();
-      if (!body.success) throw new Error(body.error ?? "執行失敗");
-      return body.data;
-    },
+    mutationFn: (step: "decide" | "fill") => apiRequest<SimStepResult>(
+      `/simulation/${market.toUpperCase()}:${step}`,
+      { method: "POST" },
+    ),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["sim-account", market] });
       qc.invalidateQueries({ queryKey: ["sim-orders", market] });

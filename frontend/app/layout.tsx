@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import "./globals.css";
 
 import { MarketSwitch } from "@/components/market-switch";
+import { ApiTokenControl } from "@/components/api-token-control";
 import { Providers } from "@/components/providers";
 
 export const metadata: Metadata = {
@@ -32,9 +33,12 @@ export default function RootLayout({
                 <Link href="/backtest" className="hover:text-neutral-900 dark:hover:text-white">回測</Link>
               </nav>
             </div>
-            <Suspense>
-              <MarketSwitch />
-            </Suspense>
+            <div className="flex items-center gap-2">
+              <ApiTokenControl />
+              <Suspense>
+                <MarketSwitch />
+              </Suspense>
+            </div>
           </div>
         </header>
         <main className="mx-auto max-w-6xl px-4 py-6">{children}</main>

@@ -10,7 +10,7 @@ router = APIRouter(tags=["usage"])
 
 
 @router.get("/usage", response_model=Envelope)
-async def get_usage(db: Session = Depends(get_db)) -> Envelope:
+def get_usage(db: Session = Depends(get_db)) -> Envelope:
     """各模型今日已用/剩餘請求數（前端額度儀表板）。"""
     quotas = get_settings().load_quotas()
     data = [

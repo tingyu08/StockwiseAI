@@ -18,7 +18,7 @@ class BadRequestError(AppError):
 
 
 @router.get("/compare", response_model=Envelope)
-async def compare_stocks(
+def compare_stocks(
     market: Literal["TW", "US"] = Query(...),
     symbols: str = Query(min_length=1, description="逗號分隔，如 2330,2317"),
     range_: Literal["3m", "6m", "1y"] = Query("1y", alias="range"),

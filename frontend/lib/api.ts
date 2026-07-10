@@ -1,6 +1,7 @@
 import type { Market } from "@/stores/market";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8123";
+export const API_TOKEN_KEY = "stockwise-api-token";
 
 export interface Envelope<T> {
   success: boolean;
@@ -18,20 +19,63 @@ export class ApiError extends Error {
   }
 }
 
+export interface ApiRequestOptions {
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+  params?: Record<string, string>;
+  market?: Market;
+  body?: unknown;
+  headers?: Record<string, string>;
+}
+
+export function getApiToken(): string | null {
+  if (typeof window === "undefined") return null;
+  return window.sessionStorage.getItem(API_TOKEN_KEY);
+}
+
+export function setApiToken(token: string | null): void {
+  if (typeof window === "undefined") return;
+  if (token) window.sessionStorage.setItem(API_TOKEN_KEY, token);
+  else window.sessionStorage.removeItem(API_TOKEN_KEY);
+}
+
+export async function apiRequest<T>(
+  path: string,
+  options: ApiRequestOptions = {},
+): Promise<T> {
+  const url = new URL(`/api/v1${path}`, API_BASE);
+  if (options.market) url.searchParams.set("market", options.market.toUpperCase());
+  for (const [key, value] of Object.entries(options.params ?? {})) {
+    url.searchParams.set(key, value);
+  }
+
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    ...options.headers,
+  };
+  const token = getApiToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (options.body !== undefined) headers["Content-Type"] = "application/json";
+
+  const response = await fetch(url, {
+    method: options.method ?? "GET",
+    headers,
+    body: options.body === undefined ? undefined : JSON.stringify(options.body),
+  });
+  const envelope = (await response.json()) as Envelope<T>;
+  if (!response.ok || !envelope.success) {
+    if (response.status === 401 && typeof window !== "undefined") {
+      window.dispatchEvent(new Event("stockwise:unauthorized"));
+    }
+    throw new ApiError(envelope.error ?? "發生未知錯誤，請稍後再試", response.status);
+  }
+  return envelope.data as T;
+}
+
 /** 統一 API client：解包 envelope、注入 market 參數、拋出使用者可讀的錯誤。 */
 export async function apiGet<T>(
   path: string,
   params: Record<string, string> = {},
   market?: Market,
 ): Promise<T> {
-  const url = new URL(`/api/v1${path}`, API_BASE);
-  if (market) url.searchParams.set("market", market.toUpperCase()); // 後端使用 'TW' | 'US'
-  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-
-  const res = await fetch(url, { headers: { Accept: "application/json" } });
-  const body = (await res.json()) as Envelope<T>;
-  if (!res.ok || !body.success) {
-    throw new ApiError(body.error ?? "發生未知錯誤，請稍後再試", res.status);
-  }
-  return body.data as T;
+  return apiRequest<T>(path, { params, market });
 }

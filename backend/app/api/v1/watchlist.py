@@ -18,6 +18,10 @@ class ConflictError(AppError):
     status_code = 409
 
 
+class BadRequestError(AppError):
+    status_code = 400
+
+
 class AddWatchBody(BaseModel):
     market: Literal["TW", "US"]
     symbol: str = Field(min_length=1, max_length=16, pattern=r"^[A-Za-z0-9.\-]+$")
@@ -166,8 +170,7 @@ async def patch_watch(
     if body.clear_group:
         item.group_id = None
     elif body.group_id is not None:
-        if db.get(WatchGroup, body.group_id) is None:
-            raise NotFoundError("查無此群組")
+        _validate_group(db, body.group_id, market)
         item.group_id = body.group_id
     db.commit()
     return ok({"symbol": symbol, "ai_managed": item.ai_managed, "group_id": item.group_id})
@@ -176,8 +179,13 @@ async def patch_watch(
 @router.put("/watchlist/reorder", response_model=Envelope)
 async def reorder_watchlist(body: ReorderBody, db: Session = Depends(get_db)) -> Envelope:
     """整批更新排序與群組歸屬（前端上/下移或搬移群組後送出全清單）。"""
+    resolved = []
     for entry in body.items:
         item = _get_item(db, body.market, entry.symbol)
+        if entry.group_id is not None:
+            _validate_group(db, entry.group_id, body.market)
+        resolved.append((entry, item))
+    for entry, item in resolved:
         item.sort_order = entry.sort_order
         item.group_id = entry.group_id
     db.commit()
@@ -206,3 +214,12 @@ def _get_item(db: Session, market: str, symbol: str) -> WatchlistItem:
     if item is None:
         raise NotFoundError(f"{symbol} 不在自選清單中")
     return item
+
+
+def _validate_group(db: Session, group_id: int, market: str) -> WatchGroup:
+    group = db.get(WatchGroup, group_id)
+    if group is None:
+        raise NotFoundError("查無此群組")
+    if group.market != market:
+        raise BadRequestError("群組與自選股市場不一致")
+    return group

@@ -7,6 +7,7 @@
 """
 from dataclasses import dataclass
 from datetime import date, timedelta
+import math
 
 import pandas as pd
 from sqlalchemy import select
@@ -35,7 +36,8 @@ class Trade:
 
 
 def run_backtest(
-    db: Session, market: str, symbol: str, strategy: str, range_days: int = 365
+    db: Session, market: str, symbol: str, strategy: str, range_days: int = 365,
+    slippage_bps: int = 5,
 ) -> dict:
     if strategy not in STRATEGIES:
         raise NotFoundError(f"未知策略：{strategy}（可用：{', '.join(STRATEGIES)}）")
@@ -67,7 +69,7 @@ def run_backtest(
     )
     ind = compute_indicators(df)
     signals = _signals(strategy, df, ind)  # 每日目標持倉 0/1（收盤時決定）
-    return _simulate(market, df, signals, strategy)
+    return _simulate(market, df, signals, strategy, slippage_bps=slippage_bps)
 
 
 def _signals(strategy: str, df: pd.DataFrame, ind: pd.DataFrame) -> list[int]:
@@ -98,7 +100,10 @@ def _signals(strategy: str, df: pd.DataFrame, ind: pd.DataFrame) -> list[int]:
     return signals
 
 
-def _simulate(market: str, df: pd.DataFrame, signals: list[int], strategy: str) -> dict:
+def _simulate(
+    market: str, df: pd.DataFrame, signals: list[int], strategy: str,
+    slippage_bps: int = 0,
+) -> dict:
     cash = 1.0  # 正規化資金
     qty = 0.0
     equity_curve: list[dict] = []
@@ -112,14 +117,18 @@ def _simulate(market: str, df: pd.DataFrame, signals: list[int], strategy: str) 
             target = signals[i - 1]
             open_price = df["open"].iloc[i]
             if target == 1 and qty == 0:
-                qty = cash * (1 - _fee_rate(market, "buy")) / open_price
+                execution_price = open_price * (1 + slippage_bps / 10_000)
+                qty = cash * (1 - _fee_rate(market, "buy")) / execution_price
                 cash = 0.0
-                entry = (df["date"].iloc[i].isoformat(), open_price)
+                entry = (df["date"].iloc[i].isoformat(), execution_price)
             elif target == 0 and qty > 0:
-                gross = qty * open_price
+                execution_price = open_price * (1 - slippage_bps / 10_000)
+                gross = qty * execution_price
                 cash = gross * (1 - _fee_rate(market, "sell"))
-                trades.append(Trade(entry[0], entry[1], df["date"].iloc[i].isoformat(), open_price,
-                                    round((open_price / entry[1] - 1) * 100, 2) if entry else None))
+                trades.append(Trade(
+                    entry[0], entry[1], df["date"].iloc[i].isoformat(), execution_price,
+                    round((execution_price / entry[1] - 1) * 100, 2) if entry else None,
+                ))
                 qty = 0.0
                 entry = None
         close = df["close"].iloc[i]
@@ -127,16 +136,19 @@ def _simulate(market: str, df: pd.DataFrame, signals: list[int], strategy: str) 
             {"date": df["date"].iloc[i].isoformat(), "equity": round(cash + qty * close, 6)}
         )
 
+    open_position = None
     if entry is not None:  # 期末未平倉：以最後收盤計未實現
         last_close = df["close"].iloc[-1]
-        trades.append(Trade(entry[0], entry[1], None, None,
-                            round((last_close / entry[1] - 1) * 100, 2)))
+        open_position = Trade(
+            entry[0], entry[1], None, None,
+            round((last_close / entry[1] - 1) * 100, 2),
+        )
 
     equities = [p["equity"] for p in equity_curve]
     total_return = (equities[-1] - 1) * 100
     years = max(len(df) / TRADING_DAYS, 1 / TRADING_DAYS)
     buy_hold = (df["close"].iloc[-1] / df["open"].iloc[0] - 1) * 100
-    closed = [t for t in trades if t.pnl_pct is not None]
+    closed = [t for t in trades if t.exit_date is not None]
     wins = [t for t in closed if t.pnl_pct > 0]
 
     return {
@@ -152,9 +164,12 @@ def _simulate(market: str, df: pd.DataFrame, signals: list[int], strategy: str) 
             "trades": len(closed),
             "buy_hold_return_pct": round(buy_hold, 2),
             "beats_buy_hold": round(total_return - buy_hold, 2),
+            "sharpe_ratio": _sharpe_ratio(equities),
         },
+        "assumptions": {"slippage_bps": slippage_bps},
         "equity_curve": equity_curve,
-        "trades": [t.__dict__ for t in trades[-50:]],
+        "trades": [t.__dict__ for t in closed[-50:]],
+        "open_position": open_position.__dict__ if open_position else None,
         "disclaimer": "回測基於歷史資料與簡化假設，不代表未來績效",
     }
 
@@ -174,3 +189,20 @@ def _max_drawdown(equities: list[float]) -> float:
         if peak > 0:
             mdd = max(mdd, (peak - e) / peak)
     return mdd
+
+
+def _sharpe_ratio(equities: list[float]) -> float | None:
+    if len(equities) < 3:
+        return None
+    returns = [
+        equities[i] / equities[i - 1] - 1
+        for i in range(1, len(equities))
+        if equities[i - 1] > 0
+    ]
+    if len(returns) < 2:
+        return None
+    mean = sum(returns) / len(returns)
+    variance = sum((value - mean) ** 2 for value in returns) / (len(returns) - 1)
+    if variance <= 0:
+        return None
+    return round(mean / math.sqrt(variance) * math.sqrt(TRADING_DAYS), 3)

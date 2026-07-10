@@ -1,6 +1,7 @@
 "use client";
 
 import { AlertsPanel } from "@/components/alerts-panel";
+import { DataStatus } from "@/components/data-status";
 import { OverviewCard } from "@/components/overview-card";
 import { StockSearch } from "@/components/stock-search";
 import { WatchlistPanel } from "@/components/watchlist-panel";
@@ -11,6 +12,7 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
+      <DataStatus />
       <section className="rounded-xl border border-neutral-200 p-6 dark:border-neutral-800">
         <h2 className="mb-3 text-lg font-semibold">搜尋 {MARKET_LABELS[market]}</h2>
         <StockSearch />

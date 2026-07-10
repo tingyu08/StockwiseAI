@@ -82,13 +82,16 @@ class YFinanceProvider(MarketDataProvider):
             ]
 
         try:
-            return await asyncio.to_thread(_download)
+            rows = await asyncio.to_thread(_download)
+            if rows:
+                return rows
+            logger.warning("yfinance 回傳空資料 %s，改用 FinMind", symbol)
         except Exception as exc:
             logger.warning("yfinance 抓取 %s 失敗（%s），改用 FinMind", symbol, exc)
-            try:
-                return await asyncio.to_thread(_download_finmind)
-            except Exception as fallback_exc:
-                raise UpstreamError(f"yfinance 與 FinMind 抓取 {symbol} 皆失敗") from fallback_exc
+        try:
+            return await asyncio.to_thread(_download_finmind)
+        except Exception as fallback_exc:
+            raise UpstreamError(f"yfinance 與 FinMind 抓取 {symbol} 皆失敗") from fallback_exc
 
     async def get_etf_nav(self, symbol: str, start: date, end: date) -> list[NavRow]:
         return []  # Phase 3 實作
