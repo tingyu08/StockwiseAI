@@ -5,7 +5,7 @@ import pytest
 from sqlalchemy.exc import IntegrityError
 
 from app.core.db import SessionLocal
-from app.models import AiReport, DailyPrice, SimOrder, Stock, WatchlistItem
+from app.models import AiReport, DailyPrice, JobRun, SimOrder, Stock, WatchlistItem
 from app.services.sim.decision import run_decisions
 from app.services.sim import engine as sim_engine
 from app.services.sim.engine import calc_fee, fill_pending_orders, get_or_create_account
@@ -65,6 +65,22 @@ def test_tw_sell_fee_includes_tax():
 
 def test_us_fee_zero():
     assert calc_fee("US", "buy", 50_000) == 0.0
+
+
+def test_manual_decision_is_enqueued_as_a_trackable_job(client):
+    response = client.post("/api/v1/simulation/TW:decide")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["started"] is True
+    db = SessionLocal()
+    try:
+        run = db.get(JobRun, data["run_id"])
+        assert run is not None
+        assert run.job_type == "simulation_decide"
+        assert json.loads(run.payload_json) == {"market": "TW"}
+    finally:
+        db.close()
 
 
 # ---- 決策 → 撮合 → 持倉 ----

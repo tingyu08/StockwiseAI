@@ -2,7 +2,14 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet, apiRequest, waitForJob, type StartedJob } from "@/lib/api";
+import {
+  apiGet,
+  apiRequest,
+  removeActiveJob,
+  trackActiveJob,
+  waitForJob,
+  type StartedJob,
+} from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
 
 export interface Group {
@@ -143,7 +150,10 @@ export function useRunOverview() {
         method: "POST",
         market,
       });
-      return waitForJob<OverviewData>(started.run_id);
+      trackActiveJob({ runId: started.run_id, name: `${market.toUpperCase()} 每日簡報` });
+      const result = await waitForJob<OverviewData>(started.run_id);
+      removeActiveJob(started.run_id);
+      return result;
     },
     onSuccess: (data) => {
       qc.setQueryData(["overview", market], data);

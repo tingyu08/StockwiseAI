@@ -2,7 +2,14 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet, apiRequest } from "@/lib/api";
+import {
+  apiGet,
+  apiRequest,
+  removeActiveJob,
+  trackActiveJob,
+  waitForJob,
+  type StartedJob,
+} from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
 
 export interface Position {
@@ -91,10 +98,21 @@ export function useRunSimStep() {
   const market = useMarketStore((s) => s.market);
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (step: "decide" | "fill") => apiRequest<SimStepResult>(
-      `/simulation/${market.toUpperCase()}:${step}`,
-      { method: "POST" },
-    ),
+    mutationFn: async (step: "decide" | "fill") => {
+      if (step === "fill") {
+        return apiRequest<SimStepResult>(`/simulation/${market.toUpperCase()}:fill`, {
+          method: "POST",
+        });
+      }
+      const started = await apiRequest<StartedJob>(
+        `/simulation/${market.toUpperCase()}:decide`,
+        { method: "POST" },
+      );
+      trackActiveJob({ runId: started.run_id, name: `${market.toUpperCase()} 模擬決策` });
+      const result = await waitForJob<SimStepResult>(started.run_id);
+      removeActiveJob(started.run_id);
+      return result;
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["sim-account", market] });
       qc.invalidateQueries({ queryKey: ["sim-orders", market] });

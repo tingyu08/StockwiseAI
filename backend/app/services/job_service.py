@@ -214,6 +214,11 @@ async def dispatch_job(job_type: str, payload: dict) -> dict | None:
         finally:
             db.close()
 
+    if job_type == "simulation_decide":
+        from app.scheduler.jobs import sim_decide_daily
+
+        return await sim_decide_daily(payload["market"])
+
     raise NotFoundError(f"未知工作類型：{job_type}")
 
 

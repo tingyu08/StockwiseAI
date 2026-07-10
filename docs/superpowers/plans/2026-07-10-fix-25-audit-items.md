@@ -136,13 +136,13 @@
 **Interfaces:**
 - Produces: content-type-safe API parsing、AbortSignal/timeout、持久 active run ids、可取消/恢復 polling 的 job center。
 
-- [ ] 新增測試：HTML/空白 502 回應轉為 ApiError，而不是 JSON parse error。
-- [ ] 新增測試：request timeout 與 waitForJob abort 停止輪詢。
-- [ ] 實作 safe envelope parser、AbortController、Retry-After 顯示資料。
-- [ ] 新增測試：run_id 存 sessionStorage，reload 後 job center 恢復 queued/running 工作。
-- [ ] 實作 job store/hook/工作中心與 retry action。
-- [ ] simulation decide 改走 background job，按鈕顯示實際階段。
-- [ ] 跑 Vitest、ESLint、build 並提交。
+- [x] 新增測試：HTML/空白 502 回應轉為 ApiError，而不是 JSON parse error。
+- [x] 新增測試：request timeout 與 waitForJob abort 停止輪詢。
+- [x] 實作 safe envelope parser、AbortController、Retry-After 顯示資料。
+- [x] 新增測試：run_id 存 sessionStorage，reload 後 job center 恢復 queued/running 工作。
+- [x] 實作 job store/hook/工作中心與 retry action。
+- [x] simulation decide 改走 background job，按鈕顯示實際階段。
+- [x] 跑 Vitest、ESLint、build 並提交。
 
 ### Task 6: DB 約束、效能、健康與保留政策
 

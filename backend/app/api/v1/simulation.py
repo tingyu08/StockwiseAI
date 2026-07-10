@@ -8,9 +8,9 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.envelope import Envelope, ok
 from app.models import AiReport, SimOrder, Stock
-from app.services.sim.decision import run_decisions
 from app.services.sim.engine import fill_pending_orders, get_or_create_account
 from app.services.sim.portfolio import equity_curve, positions_dto
+from app.services.job_service import enqueue_job
 
 router = APIRouter(tags=["simulation"])
 
@@ -75,25 +75,17 @@ def orders_view(market: Market, db: Session = Depends(get_db)) -> Envelope:
 
 
 @router.post("/simulation/{market}:decide", response_model=Envelope)
-async def trigger_decisions(market: Market, db: Session = Depends(get_db)) -> Envelope:
+async def trigger_decisions(market: Market) -> Envelope:
     """手動觸發 AI 決策。會先自動對託管股跑當日批次分析（有快取不重複扣額度）。"""
-    from sqlalchemy import select
-
-    from app.models import WatchlistItem
-    from app.services.analysis_service import run_batch
-
-    managed = db.execute(
-        select(Stock)
-        .join(WatchlistItem, WatchlistItem.stock_id == Stock.id)
-        .where(Stock.market == market, WatchlistItem.ai_managed.is_(True))
-    ).scalars().all()
-    batch_result = (
-        await run_batch(db, managed, kind="trade")
-        if managed
-        else {"analyzed": 0, "skipped": 0}
+    run_id = enqueue_job(
+        f"simulation-decide-{market.lower()}",
+        job_type="simulation_decide",
+        payload={"market": market},
+        idempotency_key=f"simulation-decide:{market}",
     )
-    result = run_decisions(db, market)
-    return ok({**result, "batch": batch_result})
+    return ok(
+        {"started": True, "job": f"simulation-decide-{market.lower()}", "run_id": run_id}
+    )
 
 
 @router.post("/simulation/{market}:fill", response_model=Envelope)
