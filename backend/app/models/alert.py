@@ -34,6 +34,11 @@ class AlertEvent(Base):
     __tablename__ = "alert_events"
     __table_args__ = (
         Index("ix_alert_events_alert_trade_date", "alert_id", "trade_date"),
+        Index(
+            "ix_alert_events_notification_created",
+            "notification_status",
+            "created_at",
+        ),
         UniqueConstraint("alert_id", "trade_date", name="uq_alert_events_daily"),
     )
 

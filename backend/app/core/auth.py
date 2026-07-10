@@ -8,7 +8,9 @@ from fastapi.responses import JSONResponse
 from app.core.config import get_settings
 from app.core.envelope import fail
 
-PUBLIC_PATHS = frozenset({"/api/v1/health"})
+PUBLIC_PATHS = frozenset(
+    {"/api/v1/health", "/api/v1/health/live", "/api/v1/health/ready"}
+)
 
 
 async def require_api_token(request: Request, call_next):

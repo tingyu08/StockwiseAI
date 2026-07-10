@@ -159,13 +159,13 @@
 **Interfaces:**
 - Produces: liveness/readiness/status、Prediction/Alert/Job indexes、批次持倉 query、retention cleanup job。
 
-- [ ] 新增 migration 測試與 unique constraint 測試。
-- [ ] 加 Prediction composite unique、Job status/created index、必要 FK/index。
-- [ ] 以批次 query 改寫 positions DTO/average cost，保留查詢數 contract。
-- [ ] 新增 `/health/live` 與 DB-aware `/health/ready` 測試及實作。
-- [ ] data-status 分開 news/routine/trade dates 與最近成功 job。
-- [ ] 新增 maintenance job 清理過期成功 JobRun/usage log，保留失敗紀錄較久。
-- [ ] 跑 health/performance/migration tests 並提交。
+- [x] 新增 migration 測試與 unique constraint 測試。
+- [x] 加 Prediction composite unique、Job status/created index、必要 FK/index。
+- [x] 以批次 query 改寫 positions DTO/average cost，保留查詢數 contract。
+- [x] 新增 `/health/live` 與 DB-aware `/health/ready` 測試及實作。
+- [x] data-status 分開 news/routine/trade dates 與最近成功 job。
+- [x] 新增 maintenance job 清理過期成功 JobRun/usage log，保留失敗紀錄較久。
+- [x] 跑 health/performance/migration tests 並提交。
 
 ### Task 7: Supply chain、CI、容器與安全預設
 

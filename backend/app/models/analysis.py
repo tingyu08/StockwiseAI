@@ -29,10 +29,19 @@ class AiReport(Base):
 
 class Prediction(Base):
     __tablename__ = "predictions"
+    __table_args__ = (
+        UniqueConstraint(
+            "stock_id",
+            "trade_date",
+            "horizon_days",
+            "method",
+            name="uq_predictions_identity",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id"), index=True)
-    trade_date: Mapped[date] = mapped_column(Date)
+    trade_date: Mapped[date] = mapped_column(Date, index=True)
     horizon_days: Mapped[int] = mapped_column(Integer)  # 5 | 20
     method: Mapped[str] = mapped_column(String(32))  # 'regression' | 'prophet' | 'ai'
     predicted_json: Mapped[str] = mapped_column(Text)

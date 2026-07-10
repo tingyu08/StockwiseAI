@@ -1,7 +1,7 @@
 """持倉與權益曲線 — 由 filled orders 事件溯源重放，不另存狀態。"""
 from datetime import date
 
-from sqlalchemy import select
+from sqlalchemy import and_, func, select
 from sqlalchemy.orm import Session
 
 from app.models import DailyPrice, SimAccount, SimOrder, Stock
@@ -22,18 +22,44 @@ def current_positions(db: Session, account: SimAccount) -> dict[int, float]:
 
 
 def positions_dto(db: Session, account: SimAccount) -> list[dict]:
-    positions = current_positions(db, account)
+    orders = db.execute(
+        select(SimOrder)
+        .where(SimOrder.account_id == account.id, SimOrder.status == "filled")
+        .order_by(SimOrder.filled_at, SimOrder.id)
+    ).scalars().all()
+    positions, average_costs = _position_state(orders)
+    if not positions:
+        return []
+
+    stock_ids = list(positions)
+    stocks = {
+        stock.id: stock
+        for stock in db.execute(select(Stock).where(Stock.id.in_(stock_ids))).scalars()
+    }
+    latest_dates = (
+        select(DailyPrice.stock_id, func.max(DailyPrice.date).label("latest_date"))
+        .where(DailyPrice.stock_id.in_(stock_ids), DailyPrice.close.is_not(None))
+        .group_by(DailyPrice.stock_id)
+        .subquery()
+    )
+    latest_prices = {
+        price.stock_id: price
+        for price in db.execute(
+            select(DailyPrice).join(
+                latest_dates,
+                and_(
+                    DailyPrice.stock_id == latest_dates.c.stock_id,
+                    DailyPrice.date == latest_dates.c.latest_date,
+                ),
+            )
+        ).scalars()
+    }
+
     out = []
     for stock_id, qty in positions.items():
-        stock = db.get(Stock, stock_id)
-        last = db.execute(
-            select(DailyPrice)
-            .where(DailyPrice.stock_id == stock_id, DailyPrice.close.is_not(None))
-            .order_by(DailyPrice.date.desc())
-            .limit(1)
-        ).scalar_one_or_none()
-        # 平均成本：重放買賣（賣出按比例沖銷成本）
-        avg_cost = _avg_cost(db, account.id, stock_id)
+        stock = stocks[stock_id]
+        last = latest_prices.get(stock_id)
+        avg_cost = average_costs.get(stock_id)
         close = float(last.close) if last else None
         market_value = round(qty * close, 2) if close else None
         out.append(
@@ -53,19 +79,15 @@ def positions_dto(db: Session, account: SimAccount) -> list[dict]:
     return out
 
 
-def _avg_cost(db: Session, account_id: int, stock_id: int) -> float | None:
-    orders = db.execute(
-        select(SimOrder)
-        .where(
-            SimOrder.account_id == account_id,
-            SimOrder.stock_id == stock_id,
-            SimOrder.status == "filled",
-        )
-        .order_by(SimOrder.filled_at)
-    ).scalars().all()
-    qty = 0.0
-    cost = 0.0
+def _position_state(
+    orders: list[SimOrder],
+) -> tuple[dict[int, float], dict[int, float]]:
+    quantities: dict[int, float] = {}
+    costs: dict[int, float] = {}
     for o in orders:
+        stock_id = o.stock_id
+        qty = quantities.get(stock_id, 0.0)
+        cost = costs.get(stock_id, 0.0)
         if o.side == "buy":
             cost += float(o.qty) * float(o.fill_price) + float(o.fee or 0)
             qty += float(o.qty)
@@ -73,7 +95,14 @@ def _avg_cost(db: Session, account_id: int, stock_id: int) -> float | None:
             if qty > 0:
                 cost -= cost * (float(o.qty) / qty)  # 按比例沖銷
             qty -= float(o.qty)
-    return round(cost / qty, 2) if qty > 0 else None
+        quantities[stock_id] = round(qty, 4)
+        costs[stock_id] = cost
+    active = {stock_id: qty for stock_id, qty in quantities.items() if qty > 0}
+    averages = {
+        stock_id: round(costs[stock_id] / qty, 2)
+        for stock_id, qty in active.items()
+    }
+    return active, averages
 
 
 def equity_curve(db: Session, account: SimAccount) -> list[dict]:
