@@ -184,7 +184,9 @@ async def dispatch_job(job_type: str, payload: dict) -> dict | None:
         market = payload["market"]
         db = SessionLocal()
         try:
-            overview = await analysis_service.run_overview(db, market)
+            overview = await analysis_service.run_overview(
+                db, market, force=bool(payload.get("force", False))
+            )
             return analysis_service.overview_dto(overview)
         finally:
             db.close()
@@ -205,7 +207,9 @@ async def dispatch_job(job_type: str, payload: dict) -> dict | None:
             ).scalar_one_or_none()
             if stock is None:
                 raise NotFoundError(f"尚未追蹤 {market}/{symbol}")
-            report = await news_service.run_news_research(db, stock)
+            report = await news_service.run_news_research(
+                db, stock, force=bool(payload.get("force", False))
+            )
             return news_service.news_dto(report)
         finally:
             db.close()

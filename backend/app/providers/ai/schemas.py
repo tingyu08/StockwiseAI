@@ -5,12 +5,12 @@
 """
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Scenario(BaseModel):
-    target_price: float
-    trigger_condition: str
+    target_price: float = Field(gt=0)
+    trigger_condition: str = Field(min_length=1, max_length=300)
     probability: float = Field(ge=0, le=1)
 
 
@@ -19,19 +19,34 @@ class Scenarios(BaseModel):
     base: Scenario
     bear: Scenario
 
+    @model_validator(mode="after")
+    def probabilities_sum_to_one(self):
+        total = self.bull.probability + self.base.probability + self.bear.probability
+        if abs(total - 1.0) > 0.02:
+            raise ValueError("scenario probability sum must be 1")
+        return self
+
 
 class AnalysisReport(BaseModel):
     """單檔股票的分析報告。"""
 
-    symbol: str
+    symbol: str = Field(min_length=1, max_length=16)
     action: Literal["buy", "sell", "hold"]
     confidence: float = Field(ge=0, le=1)
-    target_price_low: float
-    target_price_high: float
-    stop_loss: float
-    reasoning: str
+    target_price_low: float = Field(gt=0)
+    target_price_high: float = Field(gt=0)
+    stop_loss: float = Field(gt=0)
+    reasoning: str = Field(min_length=1, max_length=500)
     scenarios: Scenarios
-    risks: list[str]
+    risks: list[str] = Field(min_length=1, max_length=6)
+
+    @model_validator(mode="after")
+    def prices_are_ordered(self):
+        if self.target_price_low > self.target_price_high:
+            raise ValueError("target_price_low must not exceed target_price_high")
+        if self.stop_loss >= self.target_price_low:
+            raise ValueError("stop_loss must be below target_price_low")
+        return self
 
 
 class BatchAnalysisResult(BaseModel):

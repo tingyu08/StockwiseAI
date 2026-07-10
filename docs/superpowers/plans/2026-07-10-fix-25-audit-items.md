@@ -85,14 +85,14 @@
 **Interfaces:**
 - Produces: semantic Pydantic validators、`analysis_input_hash(context,prompt_version)`、明確 untrusted-news delimiters。
 
-- [ ] 新增測試拒絕負價格、low>high、stop loss 不合理、機率總和偏離 1、symbol 不符。
-- [ ] 實作 schema/model validators 與批次 symbol set 驗證。
-- [ ] 新增 prompt-injection 測試，確認新聞置於 `UNTRUSTED_NEWS` delimiter 且 system prompt 禁止執行內文指令。
-- [ ] 實作新聞隔離、來源欄位與長度限制。
-- [ ] 新增測試：新聞、prompt、自選內容變更時 input hash 改變並重新生成；內容相同才命中快取。
-- [ ] 新增 input_hash/prompt_version 欄位與 migration，更新 unique/cache 策略。
-- [ ] Overview 以 portfolio input hash upsert，提供 force rebuild 但保留 quota 防護。
-- [ ] 跑 AI/analysis/news tests 並提交。
+- [x] 新增測試拒絕負價格、low>high、stop loss 不合理、機率總和偏離 1、symbol 不符。
+- [x] 實作 schema/model validators 與批次 symbol set 驗證。
+- [x] 新增 prompt-injection 測試，確認新聞置於 `UNTRUSTED_NEWS` delimiter 且 system prompt 禁止執行內文指令。
+- [x] 實作新聞隔離、輸出長度限制與來源格式要求。
+- [x] 新增測試：新聞、prompt、自選內容變更時 input hash 改變並重新生成；內容相同才命中快取。
+- [x] 新增 input_hash/prompt_version 欄位與 migration，更新 daily upsert/cache 策略。
+- [x] Overview 以 portfolio input hash upsert，Overview/News 提供 force rebuild 且保留 quota 防護。
+- [x] 跑 AI/analysis/news、完整 backend、Ruff 與 migration smoke tests 並提交。
 
 ### Task 4: 交易、警示與資料正確性
 

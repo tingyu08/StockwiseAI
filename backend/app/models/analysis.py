@@ -19,6 +19,7 @@ class AiReport(Base):
     provider: Mapped[str] = mapped_column(String(32))
     model: Mapped[str] = mapped_column(String(64))
     prompt_version: Mapped[str] = mapped_column(String(16))
+    input_hash: Mapped[str] = mapped_column(String(64), default="")
     kind: Mapped[str] = mapped_column(String(8))  # 'routine' | 'deep' | 'news'
     action: Mapped[str | None] = mapped_column(String(4))  # 'buy' | 'sell' | 'hold'
     confidence: Mapped[float | None] = mapped_column(Numeric(4, 3))
@@ -48,6 +49,8 @@ class AiOverview(Base):
     market: Mapped[str] = mapped_column(String(2))
     trade_date: Mapped[date] = mapped_column(Date)
     model: Mapped[str] = mapped_column(String(64))
+    prompt_version: Mapped[str] = mapped_column(String(16), default="v1")
+    input_hash: Mapped[str] = mapped_column(String(64), default="")
     payload_json: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 

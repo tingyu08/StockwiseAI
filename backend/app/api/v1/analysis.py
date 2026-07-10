@@ -45,13 +45,18 @@ async def get_overview(
 
 @router.post("/analysis/overview:run", response_model=Envelope)
 async def run_overview(
-    market: Literal["TW", "US"] = Query(...), db: Session = Depends(get_db)
+    market: Literal["TW", "US"] = Query(...),
+    force: bool = Query(False),
+    db: Session = Depends(get_db),
 ) -> Envelope:
     """背景執行全部自選批次分析＋總評，避免長連線被平台中斷。"""
+    payload = {"market": market}
+    if force:
+        payload["force"] = True
     run_id = enqueue_job(
         f"overview-{market.lower()}",
         job_type="overview",
-        payload={"market": market},
+        payload=payload,
         idempotency_key=f"overview:{market}",
     )
     return ok({"started": True, "job": f"overview-{market.lower()}", "run_id": run_id})
@@ -117,14 +122,18 @@ async def get_news(
 async def run_news(
     symbol: str,
     market: Literal["TW", "US"] = Query(...),
+    force: bool = Query(False),
     db: Session = Depends(get_db),
 ) -> Envelope:
     """背景觸發 Antigravity 新聞研究，避免長連線被平台中斷。"""
     _get_stock(db, market, symbol)
+    payload = {"market": market, "symbol": symbol}
+    if force:
+        payload["force"] = True
     run_id = enqueue_job(
         f"news-{market.lower()}-{symbol}",
         job_type="news",
-        payload={"market": market, "symbol": symbol},
+        payload=payload,
         idempotency_key=f"news:{market}:{symbol}",
     )
     return ok({"started": True, "job": f"news-{market.lower()}-{symbol}", "run_id": run_id})

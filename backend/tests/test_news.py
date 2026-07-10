@@ -7,6 +7,12 @@ from app.models import AiReport, DailyPrice, Indicator, Stock
 from app.services import news_service
 
 
+def test_news_prompt_requires_traceable_source_urls():
+    from app.providers.ai.antigravity import NEWS_PROMPT_TEMPLATE
+
+    assert "URL" in NEWS_PROMPT_TEMPLATE
+
+
 def _seed_stock(db, symbol, market="TW", with_prices=False):
     stock = Stock(symbol=symbol, market=market, name=f"新聞{symbol}", currency="TWD", kind="stock")
     db.add(stock)
@@ -134,6 +140,28 @@ def test_news_api_run_triggers_research(client, monkeypatch):
     finally:
         db.delete(run)
         db.commit()
+        db.close()
+
+
+async def test_news_force_refresh_updates_same_daily_row(monkeypatch):
+    responses = iter(["第一版新聞", "第二版新聞"])
+
+    async def fake_research(self, symbol, name, market):
+        return next(responses)
+
+    monkeypatch.setattr(
+        "app.providers.ai.antigravity.AntigravityProvider.research_news", fake_research
+    )
+    db = SessionLocal()
+    try:
+        stock = _seed_stock(db, "7111")
+        first = await news_service.run_news_research(db, stock)
+        cached = await news_service.run_news_research(db, stock)
+        refreshed = await news_service.run_news_research(db, stock, force=True)
+
+        assert first.id == cached.id == refreshed.id
+        assert json.loads(refreshed.payload_json)["summary"] == "第二版新聞"
+    finally:
         db.close()
 
 

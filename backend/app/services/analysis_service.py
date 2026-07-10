@@ -1,8 +1,10 @@
 """AI 分析管線：輸入組裝 → 當日快取檢查 → AI → 落地。"""
 import asyncio
+import hashlib
 import json
 import logging
 from collections.abc import Sequence
+from dataclasses import asdict
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
@@ -99,12 +101,17 @@ async def build_context(db: Session, stock: Stock) -> AnalysisContext:
 
 
 async def run_batch(db: Session, stocks: Sequence[Stock], kind: str = "routine") -> dict:
-    """批次分析（每批 ≤8 檔）。已有當日報告的股票自動跳過（快取）。"""
+    """批次分析（每批 ≤8 檔）。輸入未變時命中快取。"""
     trade_dates = {s.id: _last_trade_date(db, s) for s in stocks}
-    pending = [
-        s for s in stocks
-        if (td := trade_dates[s.id]) is not None and not _report_exists(db, s.id, td, kind)
-    ]
+    pending: list[tuple[Stock, AnalysisContext, str]] = []
+    for stock in stocks:
+        trade_date = trade_dates[stock.id]
+        if trade_date is None:
+            continue
+        context = await build_context(db, stock)
+        input_hash = analysis_input_hash(context, kind)
+        if not _report_exists(db, stock.id, trade_date, kind, input_hash):
+            pending.append((stock, context, input_hash))
     if not pending:
         return {"analyzed": 0, "skipped": len(stocks), "model": None}
 
@@ -112,7 +119,7 @@ async def run_batch(db: Session, stocks: Sequence[Stock], kind: str = "routine")
     model_used = None
     for i in range(0, len(pending), 8):
         batch = pending[i : i + 8]
-        contexts = [await build_context(db, s) for s in batch]
+        contexts = [item[1] for item in batch]
         analyze = (
             ai_router.analyze_trading_batch if kind == "trade" else ai_router.analyze_batch
         )
@@ -121,7 +128,7 @@ async def run_batch(db: Session, stocks: Sequence[Stock], kind: str = "routine")
         # 數量一致時再以順序比對兜底（批次 prompt 要求依序回傳）
         by_symbol = {_norm_symbol(r.symbol): r for r in result.reports}
         rows: list[dict] = []
-        for idx, stock in enumerate(batch):
+        for idx, (stock, _context, input_hash) in enumerate(batch):
             report = by_symbol.get(_norm_symbol(stock.symbol))
             if report is None and len(result.reports) == len(batch):
                 report = result.reports[idx]
@@ -136,6 +143,7 @@ async def run_batch(db: Session, stocks: Sequence[Stock], kind: str = "routine")
                     provider="gemini",
                     model=model_used,
                     prompt_version=PROMPT_VERSION,
+                    input_hash=input_hash,
                     kind=kind,
                     action=report.action,
                     confidence=report.confidence,
@@ -147,24 +155,41 @@ async def run_batch(db: Session, stocks: Sequence[Stock], kind: str = "routine")
 
 
 def _insert_reports(db: Session, rows: list[dict]) -> int:
-    """整批落地；撞 UNIQUE（並發請求已寫入同日報告）時逐筆重試，已存在的視為快取命中。"""
-    db.add_all([AiReport(**row) for row in rows])
-    try:
-        db.commit()
-        return len(rows)
-    except IntegrityError:
-        db.rollback()
-    inserted = 0
+    """Portable upsert keyed by the existing daily uniqueness constraint."""
+    written = 0
     for row in rows:
-        if _report_exists(db, row["stock_id"], row["trade_date"], row["kind"]):
-            continue
-        db.add(AiReport(**row))
+        existing = db.execute(
+            select(AiReport).where(
+                AiReport.stock_id == row["stock_id"],
+                AiReport.trade_date == row["trade_date"],
+                AiReport.kind == row["kind"],
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            if existing.input_hash == row["input_hash"]:
+                continue
+            for key, value in row.items():
+                setattr(existing, key, value)
+        else:
+            db.add(AiReport(**row))
         try:
             db.commit()
-            inserted += 1
+            written += 1
         except IntegrityError:
             db.rollback()
-    return inserted
+            concurrent = db.execute(
+                select(AiReport).where(
+                    AiReport.stock_id == row["stock_id"],
+                    AiReport.trade_date == row["trade_date"],
+                    AiReport.kind == row["kind"],
+                )
+            ).scalar_one()
+            if concurrent.input_hash != row["input_hash"]:
+                for key, value in row.items():
+                    setattr(concurrent, key, value)
+                db.commit()
+                written += 1
+    return written
 
 
 async def run_deep(db: Session, stock: Stock) -> AiReport:
@@ -172,6 +197,8 @@ async def run_deep(db: Session, stock: Stock) -> AiReport:
     trade_date = _last_trade_date(db, stock)
     if trade_date is None:
         raise NotFoundError(f"{stock.symbol} 尚無價格資料")
+    context = await build_context(db, stock)
+    input_hash = analysis_input_hash(context, "deep")
     existing = db.execute(
         select(AiReport).where(
             AiReport.stock_id == stock.id,
@@ -179,23 +206,28 @@ async def run_deep(db: Session, stock: Stock) -> AiReport:
             AiReport.kind == "deep",
         )
     ).scalar_one_or_none()
-    if existing:
+    if existing and existing.input_hash == input_hash:
         return existing
 
-    context = await build_context(db, stock)
     report, model = await ai_router.analyze_deep(db, context)
-    row = AiReport(
-        stock_id=stock.id,
-        trade_date=trade_date,
-        provider="gemini",
-        model=model,
-        prompt_version=PROMPT_VERSION,
-        kind="deep",
-        action=report.action,
-        confidence=report.confidence,
-        payload_json=report.model_dump_json(),
-    )
-    db.add(row)
+    values = {
+        "provider": "gemini",
+        "model": model,
+        "prompt_version": PROMPT_VERSION,
+        "input_hash": input_hash,
+        "action": report.action,
+        "confidence": report.confidence,
+        "payload_json": report.model_dump_json(),
+    }
+    if existing is None:
+        row = AiReport(
+            stock_id=stock.id, trade_date=trade_date, kind="deep", **values
+        )
+        db.add(row)
+    else:
+        row = existing
+        for key, value in values.items():
+            setattr(row, key, value)
     try:
         db.commit()
     except IntegrityError:
@@ -212,17 +244,17 @@ async def run_deep(db: Session, stock: Stock) -> AiReport:
     return row
 
 
-async def run_overview(db: Session, market: str) -> "AiOverview":
+async def run_overview(db: Session, market: str, force: bool = False) -> "AiOverview":
     """一鍵：全部自選批次分析（快取）→ 四模組每日簡報（當日快取）。
 
     同市場以 asyncio.Lock 序列化：連按時第二個請求等第一個完成後直接命中快取。
     """
     lock = _overview_locks.setdefault(market, asyncio.Lock())
     async with lock:
-        return await _run_overview(db, market)
+        return await _run_overview(db, market, force=force)
 
 
-async def _run_overview(db: Session, market: str) -> "AiOverview":
+async def _run_overview(db: Session, market: str, force: bool = False) -> "AiOverview":
     from app.models import AiOverview, WatchlistItem
 
     stocks = db.execute(
@@ -238,12 +270,6 @@ async def _run_overview(db: Session, market: str) -> "AiOverview":
     )
     if trade_date is None:
         raise NotFoundError("尚無價格資料，請先同步")
-
-    existing = db.execute(
-        select(AiOverview).where(AiOverview.market == market, AiOverview.trade_date == trade_date)
-    ).scalar_one_or_none()
-    if existing:
-        return existing
 
     # 1) 確保每檔都有當日例行報告（已有的會被快取跳過）
     await run_batch(db, stocks, kind="routine")
@@ -284,16 +310,29 @@ async def _run_overview(db: Session, market: str) -> "AiOverview":
 - 模組4（risks）：只列出你有把握的重大事件（不確定的標註「時間請以官方公告為準」），黑天鵝觀察點與盤中監控訊號要具體可操作
 - 所有數字必須來自提供的資料，不得虛構行情"""
 
+    input_hash = _hash_text(f"{PROMPT_VERSION}\n{prompt}")
+    existing = db.execute(
+        select(AiOverview).where(
+            AiOverview.market == market, AiOverview.trade_date == trade_date
+        )
+    ).scalar_one_or_none()
+    if existing and existing.input_hash == input_hash and not force:
+        return existing
+
     from app.providers.ai.router import generate_premium_structured
     from app.providers.ai.schemas import DailyBriefing
 
     result, model = await generate_premium_structured(db, prompt, DailyBriefing)
 
-    overview = AiOverview(
-        market=market, trade_date=trade_date, model=model,
-        payload_json=result.model_dump_json(),
-    )
-    db.add(overview)
+    if existing is None:
+        overview = AiOverview(market=market, trade_date=trade_date)
+        db.add(overview)
+    else:
+        overview = existing
+    overview.model = model
+    overview.prompt_version = PROMPT_VERSION
+    overview.input_hash = input_hash
+    overview.payload_json = result.model_dump_json()
     try:
         db.commit()
     except IntegrityError:
@@ -373,17 +412,34 @@ def _last_trade_date(db: Session, stock: Stock) -> date | None:
     ).scalar_one_or_none()
 
 
-def _report_exists(db: Session, stock_id: int, trade_date: date, kind: str) -> bool:
-    return (
-        db.execute(
-            select(AiReport.id).where(
-                AiReport.stock_id == stock_id,
-                AiReport.trade_date == trade_date,
-                AiReport.kind == kind,
-            )
-        ).scalar_one_or_none()
-        is not None
+def _report_exists(
+    db: Session,
+    stock_id: int,
+    trade_date: date,
+    kind: str,
+    input_hash: str | None = None,
+) -> bool:
+    stmt = select(AiReport.id).where(
+        AiReport.stock_id == stock_id,
+        AiReport.trade_date == trade_date,
+        AiReport.kind == kind,
     )
+    if input_hash is not None:
+        stmt = stmt.where(AiReport.input_hash == input_hash)
+    return db.execute(stmt).scalar_one_or_none() is not None
+
+
+def analysis_input_hash(context: AnalysisContext, kind: str) -> str:
+    payload = {
+        "prompt_version": PROMPT_VERSION,
+        "kind": kind,
+        "context": asdict(context),
+    }
+    return _hash_text(json.dumps(payload, ensure_ascii=False, sort_keys=True))
+
+
+def _hash_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
 async def _tw_flow_summary(stock: Stock) -> str:

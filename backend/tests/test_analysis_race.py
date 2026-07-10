@@ -18,6 +18,7 @@ from app.providers.ai.schemas import (
     Scenario,
     Scenarios,
 )
+from app.providers.ai.base import AnalysisContext
 from app.services import analysis_service
 
 
@@ -39,11 +40,14 @@ def _seed_stock(db, symbol, market="US"):
 
 
 def _report(symbol) -> AnalysisReport:
-    scen = Scenario(target_price=100, trigger_condition="t", probability=0.3)
+    bull = Scenario(target_price=110, trigger_condition="t", probability=0.3)
+    base = Scenario(target_price=100, trigger_condition="t", probability=0.5)
+    bear = Scenario(target_price=90, trigger_condition="t", probability=0.2)
     return AnalysisReport(
         symbol=symbol, action="buy", confidence=0.8,
         target_price_low=90, target_price_high=120, stop_loss=80,
-        reasoning="測試", scenarios=Scenarios(bull=scen, base=scen, bear=scen), risks=[],
+        reasoning="測試", scenarios=Scenarios(bull=bull, base=base, bear=bear),
+        risks=["測試風險"],
     )
 
 
@@ -126,6 +130,36 @@ async def test_concurrent_run_overview_calls_ai_once(monkeypatch):
         db2.close()
 
 
+async def test_overview_force_rebuild_bypasses_same_input_cache(monkeypatch):
+    db = SessionLocal()
+    try:
+        _seed_stock(db, "9007")
+        calls = 0
+
+        async def fake_analyze_batch(_db, contexts):
+            return BatchAnalysisResult(
+                reports=[_report(context.symbol) for context in contexts]
+            ), "fake"
+
+        async def fake_generate(_db, prompt, output_model):
+            nonlocal calls
+            calls += 1
+            return _briefing(), "fake"
+
+        monkeypatch.setattr("app.providers.ai.router.analyze_batch", fake_analyze_batch)
+        monkeypatch.setattr(
+            "app.providers.ai.router.generate_premium_structured", fake_generate
+        )
+
+        await analysis_service.run_overview(db, "US")
+        await analysis_service.run_overview(db, "US")
+        await analysis_service.run_overview(db, "US", force=True)
+
+        assert calls == 2
+    finally:
+        db.close()
+
+
 async def test_run_overview_unique_conflict_returns_existing(monkeypatch):
     """commit 撞 UNIQUE(market, trade_date)（如多進程部署）：回傳既有總評而非 500。"""
     db = SessionLocal()
@@ -160,8 +194,8 @@ async def test_run_overview_unique_conflict_returns_existing(monkeypatch):
         db.close()
 
 
-async def test_run_batch_unique_conflict_treated_as_cache_hit(monkeypatch):
-    """批次 commit 撞 UNIQUE：rollback 後逐筆補寫未衝突的，不丟例外。"""
+async def test_run_batch_unique_conflict_upserts_current_input(monkeypatch):
+    """批次 commit 撞 UNIQUE：保留單列並更新成目前輸入的結果。"""
     db = SessionLocal()
     try:
         s1 = _seed_stock(db, "9003")
@@ -183,14 +217,14 @@ async def test_run_batch_unique_conflict_treated_as_cache_hit(monkeypatch):
 
         result = await analysis_service.run_batch(db, [s1, s2], kind="routine")
 
-        assert result["analyzed"] == 1  # 只有 s2 是本請求寫入
+        assert result["analyzed"] == 2
         for s in (s1, s2):
             assert analysis_service._report_exists(db, s.id, trade_date, "routine")
-        # s1 保留搶先寫入的那份，沒有重複
+        # s1 沒有重複，且更新為本次輸入雜湊的結果
         rows = db.execute(
             select(AiReport).where(AiReport.stock_id == s1.id, AiReport.kind == "routine")
         ).scalars().all()
-        assert len(rows) == 1 and rows[0].model == "other"
+        assert len(rows) == 1 and rows[0].model == "fake" and rows[0].input_hash
     finally:
         db.close()
 
@@ -218,6 +252,46 @@ async def test_trade_batch_uses_premium_router(monkeypatch):
         assert result["model"] == "gemini-3.5-flash"
         report = analysis_service.latest_report(db, stock, kinds=("trade",))
         assert report is not None and report.kind == "trade"
+    finally:
+        db.close()
+
+
+async def test_run_batch_rebuilds_when_input_context_changes(monkeypatch):
+    db = SessionLocal()
+    try:
+        stock = _seed_stock(db, "9006")
+        state = {"news": "第一版", "calls": 0}
+
+        async def fake_context(_db, current_stock):
+            return AnalysisContext(
+                symbol=current_stock.symbol,
+                market=current_stock.market,
+                price_summary="價格固定",
+                news_summary=state["news"],
+            )
+
+        async def fake_analyze(_db, contexts):
+            state["calls"] += 1
+            return BatchAnalysisResult(
+                reports=[_report(context.symbol) for context in contexts]
+            ), "fake"
+
+        monkeypatch.setattr(analysis_service, "build_context", fake_context)
+        monkeypatch.setattr("app.providers.ai.router.analyze_batch", fake_analyze)
+
+        await analysis_service.run_batch(db, [stock], kind="routine")
+        await analysis_service.run_batch(db, [stock], kind="routine")
+        state["news"] = "第二版"
+        await analysis_service.run_batch(db, [stock], kind="routine")
+
+        assert state["calls"] == 2
+        rows = db.execute(
+            select(AiReport).where(
+                AiReport.stock_id == stock.id, AiReport.kind == "routine"
+            )
+        ).scalars().all()
+        assert len(rows) == 1
+        assert rows[0].input_hash
     finally:
         db.close()
 
