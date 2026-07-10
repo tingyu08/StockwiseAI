@@ -15,8 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.exceptions import UpstreamError
-from app.core.rate_limiter import ensure_quota
-from app.models.analysis import AiUsageLog
+from app.core.rate_limiter import ensure_quota, finalize_quota, reserve_quota
 from app.providers.ai.base import AIProvider, AnalysisContext
 from app.providers.ai.schemas import AnalysisReport, BatchAnalysisResult
 
@@ -97,6 +96,9 @@ class GeminiProvider(AIProvider):
 
     async def _call_api(self, prompt: str, output_model: type[BaseModel]) -> str:
         settings = get_settings()
+        reservation_id = reserve_quota(
+            self.db, self.model_name, estimated_tokens=max(1, len(prompt))
+        )
         generation_config: dict = {"responseMimeType": "application/json"}
         if self.use_schema:
             generation_config["responseSchema"] = _to_gemini_schema(
@@ -129,32 +131,40 @@ class GeminiProvider(AIProvider):
                     json=body,
                 )
         except httpx.TimeoutException as exc:
+            finalize_quota(
+                self.db, reservation_id, provider=self.provider_name
+            )
             raise UpstreamError(f"{self.model_name} API 連線逾時") from exc
         except httpx.HTTPError as exc:
+            finalize_quota(
+                self.db, reservation_id, provider=self.provider_name
+            )
             raise UpstreamError(f"{self.model_name} API 連線失敗") from exc
         if res.status_code == 429:
+            finalize_quota(self.db, reservation_id, provider=self.provider_name)
             raise UpstreamError(f"{self.model_name} 被 Google 端限流（429）")
         if res.status_code != 200:
+            finalize_quota(self.db, reservation_id, provider=self.provider_name)
             logger.error("Gemini API %s: %s", res.status_code, res.text[:500])
             raise UpstreamError(f"{self.model_name} API 錯誤（{res.status_code}）")
 
-        data = res.json()
-        self._log_usage(data.get("usageMetadata", {}))
+        try:
+            data = res.json()
+        except ValueError as exc:
+            finalize_quota(self.db, reservation_id, provider=self.provider_name)
+            raise UpstreamError(f"{self.model_name} 回傳無效 JSON") from exc
+        usage = data.get("usageMetadata", {})
+        finalize_quota(
+            self.db,
+            reservation_id,
+            provider=self.provider_name,
+            input_tokens=usage.get("promptTokenCount"),
+            output_tokens=usage.get("candidatesTokenCount"),
+        )
         try:
             return data["candidates"][0]["content"]["parts"][0]["text"]
         except (KeyError, IndexError) as exc:
             raise UpstreamError(f"{self.model_name} 回應結構異常") from exc
-
-    def _log_usage(self, usage: dict) -> None:
-        self.db.add(
-            AiUsageLog(
-                provider=self.provider_name,
-                model=self.model_name,
-                input_tokens=usage.get("promptTokenCount"),
-                output_tokens=usage.get("candidatesTokenCount"),
-            )
-        )
-        self.db.commit()
 
 
 def _to_gemini_schema(schema: dict) -> dict:

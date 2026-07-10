@@ -3,8 +3,10 @@ from datetime import date
 from types import SimpleNamespace
 
 import pandas as pd
+import pytest
 
 from app.providers.market import finmind_us
+from app.providers.market import finmind
 
 US_BODY = {
     "msg": "success", "status": 200,
@@ -118,3 +120,43 @@ async def test_us_provider_falls_back_when_yfinance_returns_empty(monkeypatch):
 
     assert len(rows) == 1
     assert rows[0].close == 744.8
+
+
+async def test_finmind_provider_retries_status_errors(monkeypatch):
+    calls = 0
+
+    class Response:
+        def __init__(self, status_code, body):
+            self.status_code = status_code
+            self._body = body
+
+        def json(self):
+            return self._body
+
+    class Client:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return Response(503, {"status": 503, "msg": "busy"})
+            return Response(200, {"status": 200, "data": [{"stock_id": "2330"}]})
+
+    delays = []
+
+    async def no_wait(seconds):
+        delays.append(seconds)
+
+    monkeypatch.setattr(finmind.httpx, "AsyncClient", lambda **kwargs: Client())
+    monkeypatch.setattr(finmind, "sleep", no_wait, raising=False)
+
+    rows = await finmind.FinMindProvider()._fetch("TaiwanStockInfo")
+
+    assert rows == [{"stock_id": "2330"}]
+    assert calls == 2
+    assert delays == [pytest.approx(0.5)]

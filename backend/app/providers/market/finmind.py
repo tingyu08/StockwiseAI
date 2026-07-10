@@ -3,6 +3,7 @@
 備援 TWSE OpenAPI 於 Phase 3（折溢價）加入。
 """
 import logging
+from asyncio import sleep
 from datetime import date
 
 import httpx
@@ -34,9 +35,11 @@ class FinMindProvider(MarketDataProvider):
                             f"FinMind {dataset} 回應異常：{body.get('msg', res.status_code)}"
                         )
                     return body.get("data", [])
-                except (httpx.HTTPError, ValueError) as exc:
+                except (httpx.HTTPError, ValueError, UpstreamError) as exc:
                     last_error = exc
                     logger.warning("FinMind %s 第 %d 次失敗: %s", dataset, attempt, exc)
+                    if attempt < RETRIES:
+                        await sleep(0.5 * (2 ** (attempt - 1)))
         raise UpstreamError(f"FinMind {dataset} 連續 {RETRIES} 次失敗") from last_error
 
     async def search_stocks(self, query: str) -> list[StockInfo]:

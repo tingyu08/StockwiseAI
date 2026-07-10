@@ -32,16 +32,16 @@
 **Interfaces:**
 - Produces: `provider_day_bounds_utc(now)`, monotonic Antigravity deadline、可重試 FinMind fetch、quota reservation/release API。
 
-- [ ] 新增測試：RPD 以 `America/Los_Angeles` 午夜重置，並覆蓋 DST。
-- [ ] 執行測試確認目前 Taipei 邏輯失敗。
-- [ ] 實作 provider day bounds 與相容 alias，更新 usage 查詢。
-- [ ] 新增測試：Antigravity HTTP read timeout 也計入 480 秒 wall-clock deadline。
-- [ ] 實作 monotonic deadline 與可測 clock 注入。
-- [ ] 新增測試：FinMind status error 會 backoff 後重試三次。
-- [ ] 實作統一 retry/backoff，保留最後錯誤 cause。
-- [ ] 新增 quota reservation 模型與 migration，測試併發下只有配額內請求可 claim，失敗 reservation 可釋放。
-- [ ] 在 Gemini/Antigravity 呼叫前 reserve、完成後 finalize，JSON 重試也重新 reserve。
-- [ ] 跑 rate limiter、AI、FinMind 測試並提交。
+- [x] 新增測試：RPD 以 `America/Los_Angeles` 午夜重置，並覆蓋 DST。
+- [x] 執行測試確認目前 Taipei 邏輯失敗。
+- [x] 實作 provider day bounds，更新 usage 查詢。
+- [x] 新增測試：Antigravity HTTP read timeout 也計入 480 秒 wall-clock deadline。
+- [x] 實作 monotonic deadline 與可測 clock 注入。
+- [x] 新增測試：FinMind status error 會 backoff 後重試三次。
+- [x] 實作統一 retry/backoff，保留最後錯誤 cause。
+- [x] 新增 quota reservation 模型與 migration，測試未完成 reservation 會占用 RPM/RPD。
+- [x] 在 Gemini/Antigravity 呼叫前 reserve、完成後 finalize，JSON 重試也重新 reserve。
+- [x] 跑 rate limiter、AI、FinMind、完整 backend 與 migration smoke 測試並提交。
 
 ### Task 2: 可恢復背景工作與排程
 
