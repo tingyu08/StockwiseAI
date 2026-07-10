@@ -103,7 +103,9 @@ backend/
 | GET | `/api/v1/stocks/{symbol}/analysis` | 當日 AI 報告（無則回 404，前端顯示「尚未分析」） |
 | POST | `/api/v1/stocks/{symbol}/analysis:routine` | 觸發例行分析（當日快取） |
 | POST | `/api/v1/stocks/{symbol}/analysis:deep` | 觸發深度分析（3.5 Flash，檢查額度後執行） |
-| GET/POST | `/api/v1/stocks/{symbol}/news[:run]` | 讀取／觸發 Antigravity 新聞研究 |
+| GET/POST | `/api/v1/stocks/{symbol}/news[:run]` | 讀取／背景觸發 Antigravity 新聞研究；POST 回傳 `run_id` |
+| POST | `/api/v1/analysis/overview:run` | 背景產生每日簡報（3.5 優先、可降級），回傳 `run_id` |
+| GET | `/api/v1/jobs/runs/{run_id}` | 輪詢背景工作的狀態、結果或錯誤 |
 | GET | `/api/v1/stocks/{symbol}/predictions` | 預測區間帶 |
 | GET | `/api/v1/compare?symbols=A,B,C&market=tw` | 報酬率表＋正規化序列 |
 | GET | `/api/v1/premium?market=tw` | ETF 折溢價列表 |
@@ -231,8 +233,8 @@ frontend/
 
 ```
 台股日：14:30 資料更新(UC-B1) → 15:00 AI批次(UC-B2, flash-lite×2請求)
-        → 15:30 產生委託(UC-B3, pending) → 次日 09:05 以開盤價成交
-美股日：台灣時間 05:30 資料更新 → 06:00 AI批次 → 06:30 產生委託
+        → 15:15 交易分析(3.5 優先)並產生委託(UC-B3, pending) → 次日 09:05 以開盤價成交
+美股日：台灣時間 05:30 資料更新 → 06:00 AI批次 → 06:15 交易分析並產生委託
         → 美股次日開盤後成交
 每  日：07:00 Antigravity 新聞研究(UC-B4, 自選股逐檔, ≤30 請求)
 失敗處理：每步獨立 try/except＋log；資料更新失敗則跳過當日 AI 批次（避免用舊資料決策）

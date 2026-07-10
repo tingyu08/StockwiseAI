@@ -57,4 +57,25 @@ describe("API client", () => {
       }),
     );
   });
+
+  it("polls a background job until its result is ready", async () => {
+    const waitForJob = (api as typeof api & {
+      waitForJob?: <T>(runId: number, options?: { intervalMs?: number }) => Promise<T>;
+    }).waitForJob;
+    expect(waitForJob).toBeTypeOf("function");
+    if (!waitForJob) return;
+
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(okResponse({ status: "running", result: null }))
+      .mockResolvedValueOnce(
+        okResponse({ status: "succeeded", result: { summary: "完成" } }),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(waitForJob<{ summary: string }>(42, { intervalMs: 0 })).resolves.toEqual({
+      summary: "完成",
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });

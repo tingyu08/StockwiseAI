@@ -107,7 +107,10 @@ async def test_concurrent_run_overview_calls_ai_once(monkeypatch):
             return _briefing(), "fake"
 
         monkeypatch.setattr("app.providers.ai.router.analyze_batch", fake_analyze_batch)
-        monkeypatch.setattr("app.providers.ai.router.generate_structured", fake_generate_structured)
+        monkeypatch.setattr(
+            "app.providers.ai.router.generate_premium_structured",
+            fake_generate_structured,
+        )
 
         r1, r2 = await asyncio.gather(
             analysis_service.run_overview(db1, "US"),
@@ -143,7 +146,10 @@ async def test_run_overview_unique_conflict_returns_existing(monkeypatch):
             return _briefing(), "fake"
 
         monkeypatch.setattr("app.providers.ai.router.analyze_batch", fake_analyze_batch)
-        monkeypatch.setattr("app.providers.ai.router.generate_structured", fake_generate_structured)
+        monkeypatch.setattr(
+            "app.providers.ai.router.generate_premium_structured",
+            fake_generate_structured,
+        )
 
         result = await analysis_service.run_overview(db, "US")
 
@@ -185,6 +191,33 @@ async def test_run_batch_unique_conflict_treated_as_cache_hit(monkeypatch):
             select(AiReport).where(AiReport.stock_id == s1.id, AiReport.kind == "routine")
         ).scalars().all()
         assert len(rows) == 1 and rows[0].model == "other"
+    finally:
+        db.close()
+
+
+async def test_trade_batch_uses_premium_router(monkeypatch):
+    db = SessionLocal()
+    try:
+        stock = _seed_stock(db, "9005")
+
+        async def fail_routine(*args, **kwargs):
+            raise AssertionError("trade batch must not use the routine chain first")
+
+        async def fake_trade(_db, contexts):
+            return BatchAnalysisResult(
+                reports=[_report(context.symbol) for context in contexts]
+            ), "gemini-3.5-flash"
+
+        monkeypatch.setattr("app.providers.ai.router.analyze_batch", fail_routine)
+        monkeypatch.setattr(
+            "app.providers.ai.router.analyze_trading_batch", fake_trade
+        )
+
+        result = await analysis_service.run_batch(db, [stock], kind="trade")
+
+        assert result["model"] == "gemini-3.5-flash"
+        report = analysis_service.latest_report(db, stock, kinds=("trade",))
+        assert report is not None and report.kind == "trade"
     finally:
         db.close()
 

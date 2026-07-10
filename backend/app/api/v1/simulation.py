@@ -87,7 +87,11 @@ async def trigger_decisions(market: Market, db: Session = Depends(get_db)) -> En
         .join(WatchlistItem, WatchlistItem.stock_id == Stock.id)
         .where(Stock.market == market, WatchlistItem.ai_managed.is_(True))
     ).scalars().all()
-    batch_result = await run_batch(db, managed) if managed else {"analyzed": 0, "skipped": 0}
+    batch_result = (
+        await run_batch(db, managed, kind="trade")
+        if managed
+        else {"analyzed": 0, "skipped": 0}
+    )
     result = run_decisions(db, market)
     return ok({**result, "batch": batch_result})
 

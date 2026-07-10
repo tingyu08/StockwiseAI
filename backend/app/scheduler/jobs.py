@@ -93,12 +93,23 @@ async def news_research_daily(market: str) -> dict:
 
 
 async def sim_decide_daily(market: str) -> dict:
-    """AI 批次分析後，依報告產生模擬委託單（隔日開盤成交）。"""
+    """以 3.5 優先的交易分析產生模擬委託單（隔日開盤成交）。"""
+    from app.services.analysis_service import run_batch
     from app.services.sim.decision import run_decisions
 
     db = SessionLocal()
     try:
-        return run_decisions(db, market)
+        stocks = db.execute(
+            select(Stock)
+            .join(WatchlistItem, WatchlistItem.stock_id == Stock.id)
+            .where(Stock.market == market, WatchlistItem.ai_managed.is_(True))
+        ).scalars().all()
+        batch = (
+            await run_batch(db, stocks, kind="trade")
+            if stocks
+            else {"analyzed": 0, "skipped": 0, "model": None}
+        )
+        return {**run_decisions(db, market), "batch": batch}
     finally:
         db.close()
 

@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet, apiRequest, ApiError } from "@/lib/api";
+import { apiGet, apiRequest, ApiError, waitForJob, type StartedJob } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
 
 export interface NewsData {
@@ -26,10 +26,13 @@ export function useRunNews(symbol: string) {
   const market = useMarketStore((s) => s.market);
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () => apiRequest<NewsData>(
-      `/stocks/${symbol}/news:run`,
-      { method: "POST", market },
-    ),
+    mutationFn: async () => {
+      const started = await apiRequest<StartedJob>(`/stocks/${symbol}/news:run`, {
+        method: "POST",
+        market,
+      });
+      return waitForJob<NewsData>(started.run_id);
+    },
     onSuccess: (data) => {
       qc.setQueryData(["news", market, symbol], data);
       qc.invalidateQueries({ queryKey: ["usage"] });

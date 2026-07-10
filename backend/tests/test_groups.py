@@ -1,4 +1,6 @@
 from datetime import date, timedelta
+import json
+from types import SimpleNamespace
 
 from app.core.db import SessionLocal
 from app.models import DailyPrice, Stock, WatchlistItem
@@ -65,6 +67,26 @@ def test_group_crud_and_assignment(client):
 def test_overview_404_when_none(client):
     res = client.get("/api/v1/analysis/overview?market=US")
     assert res.status_code == 404
+
+
+def test_overview_run_starts_background_job(client, monkeypatch):
+    async def fake_run_overview(db, market):
+        return SimpleNamespace(
+            market=market,
+            trade_date=date.today(),
+            model="fake",
+            payload_json=json.dumps({"overall_stance": "neutral"}),
+            created_at=None,
+        )
+
+    monkeypatch.setattr(
+        "app.api.v1.analysis.analysis_service.run_overview", fake_run_overview
+    )
+    res = client.post("/api/v1/analysis/overview:run?market=US")
+
+    assert res.status_code == 200
+    assert res.json()["data"]["started"] is True
+    assert isinstance(res.json()["data"]["run_id"], int)
 
 
 def test_watchlist_rejects_group_from_another_market(client):

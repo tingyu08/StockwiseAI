@@ -73,15 +73,20 @@ class AntigravityProvider:
             "tools": [{"type": "google_search"}, {"type": "url_context"}],
             "background": True,
         }
-        async with httpx.AsyncClient(timeout=60) as client:
-            res = await client.post(
-                INTERACTIONS_URL,
-                headers={
-                    "x-goog-api-key": settings.gemini_api_key,
-                    "Api-Revision": API_REVISION,
-                },
-                json=body,
-            )
+        try:
+            async with httpx.AsyncClient(timeout=60) as client:
+                res = await client.post(
+                    INTERACTIONS_URL,
+                    headers={
+                        "x-goog-api-key": settings.gemini_api_key,
+                        "Api-Revision": API_REVISION,
+                    },
+                    json=body,
+                )
+        except httpx.TimeoutException as exc:
+            raise UpstreamError("Antigravity 建立新聞任務逾時") from exc
+        except httpx.HTTPError as exc:
+            raise UpstreamError("Antigravity 建立新聞任務連線失敗") from exc
         if res.status_code == 429:
             raise UpstreamError("Antigravity 被 Google 端限流（429）")
         if res.status_code != 200:
@@ -103,10 +108,19 @@ class AntigravityProvider:
                     raise UpstreamError(f"Antigravity 任務逾時（>{MAX_WAIT_SEC}s）")
                 await asyncio.sleep(POLL_INTERVAL_SEC)
                 waited += POLL_INTERVAL_SEC
-                res = await client.get(
-                    f"{INTERACTIONS_URL}/{interaction_id}",
-                    headers={"x-goog-api-key": settings.gemini_api_key},
-                )
+                try:
+                    res = await client.get(
+                        f"{INTERACTIONS_URL}/{interaction_id}",
+                        headers={"x-goog-api-key": settings.gemini_api_key},
+                    )
+                except httpx.TimeoutException:
+                    logger.warning(
+                        "Antigravity poll timed out; retrying interaction %s",
+                        interaction_id,
+                    )
+                    continue
+                except httpx.HTTPError as exc:
+                    raise UpstreamError("Antigravity 輪詢連線失敗") from exc
                 if res.status_code != 200:
                     logger.error("Antigravity poll %s: %s", res.status_code, res.text[:300])
                     raise UpstreamError(f"Antigravity 輪詢失敗（{res.status_code}）")

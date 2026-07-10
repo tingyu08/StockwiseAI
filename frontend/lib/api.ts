@@ -27,6 +27,18 @@ export interface ApiRequestOptions {
   headers?: Record<string, string>;
 }
 
+export interface StartedJob {
+  started: true;
+  job: string;
+  run_id: number;
+}
+
+interface JobRun<T> {
+  status: "queued" | "running" | "succeeded" | "failed";
+  result: T | null;
+  error: string | null;
+}
+
 export function getApiToken(): string | null {
   if (typeof window === "undefined") return null;
   return window.sessionStorage.getItem(API_TOKEN_KEY);
@@ -78,4 +90,23 @@ export async function apiGet<T>(
   market?: Market,
 ): Promise<T> {
   return apiRequest<T>(path, { params, market });
+}
+
+export async function waitForJob<T>(
+  runId: number,
+  options: { intervalMs?: number; timeoutMs?: number } = {},
+): Promise<T> {
+  const intervalMs = options.intervalMs ?? 2_000;
+  const timeoutMs = options.timeoutMs ?? 10 * 60_000;
+  const startedAt = Date.now();
+
+  while (Date.now() - startedAt <= timeoutMs) {
+    const run = await apiGet<JobRun<T>>(`/jobs/runs/${runId}`);
+    if (run.status === "succeeded") return run.result as T;
+    if (run.status === "failed") {
+      throw new ApiError(run.error ?? "背景工作執行失敗", 502);
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  throw new ApiError("背景工作等待逾時，稍後可重新整理查看結果", 408);
 }

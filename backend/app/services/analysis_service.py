@@ -113,7 +113,10 @@ async def run_batch(db: Session, stocks: Sequence[Stock], kind: str = "routine")
     for i in range(0, len(pending), 8):
         batch = pending[i : i + 8]
         contexts = [await build_context(db, s) for s in batch]
-        result, model_used = await ai_router.analyze_batch(db, contexts)
+        analyze = (
+            ai_router.analyze_trading_batch if kind == "trade" else ai_router.analyze_batch
+        )
+        result, model_used = await analyze(db, contexts)
         # 模型偶爾把 symbol 回成 'TW/2330' 或含名稱 → 正規化後比對；
         # 數量一致時再以順序比對兜底（批次 prompt 要求依序回傳）
         by_symbol = {_norm_symbol(r.symbol): r for r in result.reports}
@@ -281,10 +284,10 @@ async def _run_overview(db: Session, market: str) -> "AiOverview":
 - 模組4（risks）：只列出你有把握的重大事件（不確定的標註「時間請以官方公告為準」），黑天鵝觀察點與盤中監控訊號要具體可操作
 - 所有數字必須來自提供的資料，不得虛構行情"""
 
-    from app.providers.ai.router import generate_structured
+    from app.providers.ai.router import generate_premium_structured
     from app.providers.ai.schemas import DailyBriefing
 
-    result, model = await generate_structured(db, prompt, DailyBriefing)
+    result, model = await generate_premium_structured(db, prompt, DailyBriefing)
 
     overview = AiOverview(
         market=market, trade_date=trade_date, model=model,

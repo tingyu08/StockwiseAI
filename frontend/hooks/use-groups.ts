@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet, apiRequest } from "@/lib/api";
+import { apiGet, apiRequest, waitForJob, type StartedJob } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
 
 export interface Group {
@@ -138,8 +138,13 @@ export function useRunOverview() {
   const market = useMarketStore((s) => s.market);
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: () =>
-      apiRequest<OverviewData>("/analysis/overview:run", { method: "POST", market }),
+    mutationFn: async () => {
+      const started = await apiRequest<StartedJob>("/analysis/overview:run", {
+        method: "POST",
+        market,
+      });
+      return waitForJob<OverviewData>(started.run_id);
+    },
     onSuccess: (data) => {
       qc.setQueryData(["overview", market], data);
       qc.invalidateQueries({ queryKey: ["usage"] });

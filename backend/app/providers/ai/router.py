@@ -19,6 +19,7 @@ ROUTINE_CHAIN = [
     ("gemma-4-31b-it", False),  # Gemma 不支援 response_schema
 ]
 DEEP_MODEL = "gemini-3.5-flash"
+PREMIUM_CHAIN = [(DEEP_MODEL, True), *ROUTINE_CHAIN]
 
 
 async def analyze_batch(db: Session, contexts: list[AnalysisContext]) -> tuple[BatchAnalysisResult, str]:
@@ -40,6 +41,22 @@ async def analyze_deep(db: Session, context: AnalysisContext) -> tuple[AnalysisR
     return await provider.analyze_deep(context), DEEP_MODEL
 
 
+async def analyze_trading_batch(
+    db: Session, contexts: list[AnalysisContext]
+) -> tuple[BatchAnalysisResult, str]:
+    """交易決策分析優先使用 3.5，失敗或額度不足時自動降級。"""
+    last_error: Exception | None = None
+    for model, use_schema in PREMIUM_CHAIN:
+        try:
+            provider = GeminiProvider(model, db, use_schema=use_schema)
+            result = await provider.analyze_batch(contexts)
+            return result, model
+        except (QuotaExceededError, UpstreamError) as exc:
+            logger.warning("交易分析模型 %s 失敗，嘗試下一個：%s", model, exc.message)
+            last_error = exc
+    raise UpstreamError("所有交易分析模型皆不可用") from last_error
+
+
 async def generate_structured(db: Session, prompt: str, output_model):
     """通用結構化生成，走例行降級鏈。回傳 (結果, 模型)。"""
     last_error: Exception | None = None
@@ -51,3 +68,16 @@ async def generate_structured(db: Session, prompt: str, output_model):
             logger.warning("結構化生成 %s 失敗，降級下一層：%s", model, exc.message)
             last_error = exc
     raise UpstreamError("所有模型皆不可用") from last_error
+
+
+async def generate_premium_structured(db: Session, prompt: str, output_model):
+    """重要摘要優先使用 3.5，失敗或額度不足時自動降級。"""
+    last_error: Exception | None = None
+    for model, use_schema in PREMIUM_CHAIN:
+        try:
+            provider = GeminiProvider(model, db, use_schema=use_schema)
+            return await provider.generate(prompt, output_model), model
+        except (QuotaExceededError, UpstreamError) as exc:
+            logger.warning("重要摘要模型 %s 失敗，嘗試下一個：%s", model, exc.message)
+            last_error = exc
+    raise UpstreamError("所有摘要模型皆不可用") from last_error

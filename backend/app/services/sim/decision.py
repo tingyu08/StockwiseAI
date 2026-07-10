@@ -135,16 +135,19 @@ def _last_close(db: Session, stock_id: int) -> float | None:
 
 
 def _today_report(db: Session, stock_id: int) -> AiReport | None:
-    """最新交易日的報告（deep 優先）。"""
+    """最新交易日的報告（trade → deep → routine）。"""
     latest_date = db.execute(
         select(AiReport.trade_date)
-        .where(AiReport.stock_id == stock_id, AiReport.kind.in_(("routine", "deep")))
+        .where(
+            AiReport.stock_id == stock_id,
+            AiReport.kind.in_(("trade", "deep", "routine")),
+        )
         .order_by(AiReport.trade_date.desc())
         .limit(1)
     ).scalar_one_or_none()
     if latest_date is None or latest_date < _last_price_date(db, stock_id):
         return None  # 報告過期（未涵蓋最新交易日）不據以決策
-    for kind in ("deep", "routine"):
+    for kind in ("trade", "deep", "routine"):
         report = db.execute(
             select(AiReport).where(
                 AiReport.stock_id == stock_id,

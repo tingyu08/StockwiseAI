@@ -113,7 +113,7 @@ watchlists       自選股清單
 | 方案 | 模型 | 免費額度 | 定位 |
 |------|------|---------|------|
 | **Gemini 3.1 Flash Lite**（例行批次主力） | `gemini-3.1-flash-lite` | 本帳號實測：**15 RPM / 250K TPM / 500 RPD** | 額度最寬裕，支援 structured output，例行技術面批次分析品質足夠 |
-| **Gemini 3.5 Flash**（深度分析） | `gemini-3.5-flash` | 本帳號實測：**5 RPM / 250K TPM / 20 RPD** | 品質最好但額度稀缺，保留給使用者主動觸發的單檔深度分析 |
+| **Gemini 3.5 Flash**（重要決策） | `gemini-3.5-flash` | 本帳號實測：**5 RPM / 250K TPM / 20 RPD** | 優先用於單檔深度分析、每日簡報總結與模擬交易分析；額度盡或上游失敗時，後兩者自動降級 |
 | **Gemma 4 31B**（大額度備援） | `gemma-4-31b-it`（Gemini API 同一把 key） | 本帳號實測：**1,500 RPD**，全系統額度最大 | 開放權重模型，支援 function calling 與 JSON 輸出、256K context；flash-lite 限流時無縫接手，額度大到可承接全部批次量 |
 | **Antigravity Agent**（研究型任務） | `antigravity-preview-05-2026`（Interactions API，底層 Gemini 3.5 Flash） | 免費層 60 RPM / 100K TPM / 100 RPD | 自帶沙箱＋Google 搜尋＋URL 抓取＋程式碼執行的託管 agent，適合「個股新聞/事件研究」這種需要自己上網查資料的任務；**不支援 structured output、不支援 temperature 等參數、preview 狀態隨時可能變動**，故不當主分析管線 |
 | **OpenRouter 免費模型**（最後備援，選配） | `gemma-4-31b-it:free` 等 | OpenRouter 獨立免費額度 | Google 整把 key 被限流時的異地備援，同模型品質一致 |
@@ -127,7 +127,8 @@ watchlists       自選股清單
 1. **批次分析**：一次請求分析多檔股票（structured output 回傳陣列，每批 8~10 檔）。30 檔託管清單 = 台股 2 請求＋美股 2 請求，**每日例行批次只吃 4 個請求**（TPM 250K 遠夠裝下多檔的輸入資料）
 2. **模型分流（四層）**：
    - 例行每日批次 → `gemini-3.1-flash-lite`（500 RPD，主力）
-   - 單檔深度分析（使用者觸發）→ `gemini-3.5-flash`（20 RPD，稀缺資源）
+   - 單檔深度分析（使用者觸發）→ `gemini-3.5-flash`（品質不可替代，不降級）
+   - 每日簡報總結、模擬交易分析 → `gemini-3.5-flash` 優先，失敗時依序降級至 Flash Lite、Gemma
    - flash-lite 限流或量大時 → `gemma-4-31b-it`（1,500 RPD，同一把 key 但額度獨立計算）
    - Google 整把 key 被限流（罕見）→ OpenRouter `gemma-4-31b-it:free`（選配，獨立額度）
 3. **請求節流器**：全域 rate limiter 按模型別對齊儀表板實際額度，超出自動降級到下一層
@@ -139,6 +140,7 @@ watchlists       自選股清單
 | 任務 | 模型 | 請求數/日 | 額度 | 餘裕 |
 |------|------|-----------|------|------|
 | 例行批次分析（30 檔，批次化） | 3.1 Flash Lite | ~4 | 500 RPD | 125 倍 |
+| 模擬交易批次＋每日簡報總結 | 3.5 Flash（可降級） | ~5 | 20 RPD | 約 4 倍 |
 | 單檔深度分析（個股頁觸發，含快取） | 3.5 Flash | ~5–10 | 20 RPD | 2~4 倍 |
 | 溢出/備援 | Gemma 4 31B | 0（平時） | 1,500 RPD | 全系統最大口袋 |
 | 新聞/事件研究 | Antigravity | ~10–30 | 100 RPD（獨立額度） | 3~10 倍 |

@@ -121,7 +121,8 @@ def test_news_api_run_triggers_research(client, monkeypatch):
 
     res = client.post("/api/v1/stocks/7107/news:run?market=TW")
     assert res.status_code == 200
-    assert res.json()["data"]["summary"] == "手動觸發研究結果"
+    assert res.json()["data"]["started"] is True
+    assert isinstance(res.json()["data"]["run_id"], int)
 
 
 def test_extract_output_text_from_steps():

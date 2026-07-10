@@ -121,12 +121,17 @@ class GeminiProvider(AIProvider):
                 SYSTEM_PROMPT + "\n\n" + full_prompt
             )
 
-        async with httpx.AsyncClient(timeout=120) as client:
-            res = await client.post(
-                f"{BASE_URL}/{self.model_name}:generateContent",
-                params={"key": settings.gemini_api_key},
-                json=body,
-            )
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                res = await client.post(
+                    f"{BASE_URL}/{self.model_name}:generateContent",
+                    params={"key": settings.gemini_api_key},
+                    json=body,
+                )
+        except httpx.TimeoutException as exc:
+            raise UpstreamError(f"{self.model_name} API 連線逾時") from exc
+        except httpx.HTTPError as exc:
+            raise UpstreamError(f"{self.model_name} API 連線失敗") from exc
         if res.status_code == 429:
             raise UpstreamError(f"{self.model_name} 被 Google 端限流（429）")
         if res.status_code != 200:
