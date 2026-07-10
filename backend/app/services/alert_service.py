@@ -3,11 +3,13 @@ import logging
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.models import DailyPrice, EtfNav, Stock
 from app.models.alert import Alert, AlertEvent
+from app.services.time_service import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -34,9 +36,16 @@ def check_alerts(db: Session, market: str) -> dict:
         ).scalar_one_or_none()
         if exists:
             continue
-        db.add(AlertEvent(alert_id=alert.id, trade_date=trade_date, value=value))
+        event = AlertEvent(alert_id=alert.id, trade_date=trade_date, value=value)
+        db.add(event)
+        try:
+            db.commit()
+        except IntegrityError:
+            db.rollback()
+            continue
         triggered += 1
         events.append({
+            "event_id": event.id,
             "alert_id": alert.id,
             "symbol": stock.symbol,
             "name": stock.name,
@@ -46,8 +55,48 @@ def check_alerts(db: Session, market: str) -> dict:
             "trade_date": trade_date.isoformat(),
         })
         logger.info("alert triggered: %s %s %s (value=%.4f)", stock.symbol, alert.kind, alert.threshold, value)
-    db.commit()
     return {"market": market, "checked": len(alerts), "triggered": triggered, "events": events}
+
+
+async def deliver_pending_notifications(
+    db: Session, webhook_url: str | None = None
+) -> dict:
+    """Deliver the alert outbox; failed events remain pending for later runs."""
+    rows = db.execute(
+        select(AlertEvent, Alert, Stock)
+        .join(Alert, AlertEvent.alert_id == Alert.id)
+        .join(Stock, Alert.stock_id == Stock.id)
+        .where(AlertEvent.notification_status == "pending")
+        .order_by(AlertEvent.created_at, AlertEvent.id)
+        .limit(100)
+    ).all()
+    if not rows:
+        return {"sent": 0, "failed": 0}
+    payload = [
+        {
+            "event_id": event.id,
+            "alert_id": alert.id,
+            "symbol": stock.symbol,
+            "name": stock.name,
+            "kind": alert.kind,
+            "threshold": float(alert.threshold),
+            "value": float(event.value),
+            "trade_date": event.trade_date.isoformat(),
+        }
+        for event, alert, stock in rows
+    ]
+    result = await send_alert_notifications(payload, webhook_url=webhook_url)
+    succeeded = result["failed"] == 0
+    for event, _alert, _stock in rows:
+        event.notification_attempts += 1
+        if succeeded:
+            event.notification_status = "sent"
+            event.notification_error = None
+            event.sent_at = utc_now_naive()
+        else:
+            event.notification_error = "webhook delivery failed"
+    db.commit()
+    return result
 
 
 async def send_alert_notifications(

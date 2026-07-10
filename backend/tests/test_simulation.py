@@ -80,7 +80,11 @@ def test_buy_decision_and_fill_flow(client):
 
         # 委託尚未成交（created_at 為今日，需下一交易日價格）——
         # 測試資料價格截至過去日期，將 created_at 往回調使其可成交
-        order = db.execute(__import__("sqlalchemy").select(SimOrder)).scalars().first()
+        order = db.execute(
+            __import__("sqlalchemy").select(SimOrder).where(
+                SimOrder.stock_id == stock.id
+            )
+        ).scalars().first()
         # 種子價格區間約為 [today-100, today-44]，回調至 90 天前確保其後仍有交易日
         order.created_at = datetime.now() - timedelta(days=90)
         db.commit()
@@ -227,4 +231,51 @@ def test_pending_order_can_be_claimed_only_once(client):
         assert claim(db, order.id) is False
     finally:
         db.rollback()
+        db.close()
+
+
+def test_affordable_quantity_is_computed_without_incremental_shrinking():
+    affordable = getattr(sim_engine, "_affordable_qty", None)
+    assert callable(affordable)
+    if not affordable:
+        return
+
+    assert affordable(1_000, 100, "TW") == 9
+    assert affordable(1_000, 3, "US") == 333.33
+    us_qty = affordable(1_000, 3, "US")
+    assert us_qty * 3 + calc_fee("US", "buy", us_qty * 3) <= 1_000
+
+
+def test_multiple_buy_signals_reserve_cash_by_confidence():
+    db = SessionLocal()
+    try:
+        account = get_or_create_account(db, "US")
+        for order in db.execute(
+            __import__("sqlalchemy").select(SimOrder).where(
+                SimOrder.account_id == account.id
+            )
+        ).scalars():
+            db.delete(order)
+        account.cash = account.initial_cash
+        db.commit()
+
+        stocks = []
+        for index in range(6):
+            stock = _seed_stock(db, f"CASH{index + 1}", market="US")
+            _add_report(db, stock, action="buy", confidence=0.95 - index * 0.01)
+            stocks.append(stock)
+
+        result = run_decisions(db, "US")
+        created_symbols = {order["symbol"] for order in result["orders"]}
+        pending = db.execute(
+            __import__("sqlalchemy").select(SimOrder).where(
+                SimOrder.account_id == account.id, SimOrder.status == "pending"
+            )
+        ).scalars().all()
+        reserved = sum(float(order.qty) * 100 for order in pending)
+
+        assert reserved <= float(account.initial_cash) * (1 - 0.10)
+        assert "CASH1" in created_symbols
+        assert "CASH6" not in created_symbols
+    finally:
         db.close()

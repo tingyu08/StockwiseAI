@@ -138,14 +138,14 @@ async def nav_snapshot_daily(market: str) -> dict:
 
 async def alert_check_daily(market: str) -> dict:
     """價格/折溢價警示檢查（於同步與淨值快照之後）。"""
-    from app.services.alert_service import check_alerts, send_alert_notifications
+    from app.services.alert_service import check_alerts, deliver_pending_notifications
 
     db = SessionLocal()
     try:
         result = check_alerts(db, market)
+        notifications = await deliver_pending_notifications(db)
     finally:
         db.close()
-    notifications = await send_alert_notifications(result["events"])
     return {**result, "notifications": notifications}
 
 

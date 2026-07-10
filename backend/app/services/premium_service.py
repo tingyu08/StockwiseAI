@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import UpstreamError
 from app.models import EtfNav, Stock
+from app.services.time_service import market_today
 
 logger = logging.getLogger(__name__)
 
@@ -94,7 +95,7 @@ async def _us_snapshot(symbols: list[str]) -> dict[str, tuple[float, float, date
             nav = info.get("navPrice")
             price = info.get("regularMarketPrice")
             if nav and price:
-                return float(nav), float(price), date.today()
+                return float(nav), float(price), market_today("US")
         except Exception as exc:
             logger.warning("yfinance nav %s failed: %s", symbol, exc)
         return None

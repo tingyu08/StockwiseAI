@@ -18,6 +18,7 @@ from app.providers.ai import router as ai_router
 from app.providers.ai.base import AnalysisContext
 from app.providers.ai.gemini import PROMPT_VERSION
 from app.services.market_gateway import market_data
+from app.services.time_service import market_today
 
 if TYPE_CHECKING:
     from app.models import AiOverview
@@ -44,7 +45,7 @@ def latest_report(db: Session, stock: Stock, kinds: tuple[str, ...] = ("deep", "
 
 async def build_context(db: Session, stock: Stock) -> AnalysisContext:
     """後端組裝分析輸入——AI 不自己抓資料。"""
-    since = date.today() - timedelta(days=180)
+    since = market_today(stock.market) - timedelta(days=180)
     prices = db.execute(
         select(DailyPrice)
         .where(DailyPrice.stock_id == stock.id, DailyPrice.date >= since)
@@ -444,8 +445,9 @@ def _hash_text(value: str) -> str:
 
 async def _tw_flow_summary(stock: Stock) -> str:
     try:
+        today = market_today("TW")
         rows = await market_data.get_institutional_flows(
-            "TW", stock.symbol, date.today() - timedelta(days=14), date.today()
+            "TW", stock.symbol, today - timedelta(days=14), today
         )
         if not rows:
             return ""

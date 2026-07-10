@@ -111,15 +111,15 @@
 **Interfaces:**
 - Produces: market-aware dates、portfolio cash reservation、O(1) affordable quantity、alert outbox、recent-window price upsert。
 
-- [ ] 新增測試：多檔買進合計不超過可用現金且配置不受迭代順序意外影響。
-- [ ] 新增測試：縮量以公式完成並符合費用/台股整股規則。
-- [ ] 實作預留現金與二分/公式 sizing。
-- [ ] 新增測試：webhook 失敗保留 pending notification，成功後標 sent；同日事件不可重複。
-- [ ] 新增 alert event unique/outbox 欄位與 retry service。
-- [ ] 新增市場時區與業務日測試，替換交易/新聞/同步的 host `date.today()`。
-- [ ] 新增測試：同步會重抓最近 10 天、upsert 修正值並補缺口。
-- [ ] 實作 rolling refresh/upsert，不再只 append。
-- [ ] 跑 simulation/alert/sync tests 並提交。
+- [x] 新增測試：多檔買進合計不超過可用現金，依信心與 symbol 決定穩定順序。
+- [x] 新增測試：縮量以二分搜尋完成並符合費用/台股整股規則。
+- [x] 實作預留現金與 O(log n) affordable quantity sizing。
+- [x] 新增測試：webhook 失敗保留 pending notification，成功後標 sent；同日事件不可重複。
+- [x] 新增 alert event unique/outbox 欄位與 retry service。
+- [x] 新增市場時區與業務日測試，替換交易/新聞/同步/分析的 host `date.today()`。
+- [x] 新增測試：同步會重抓最近 14 天、upsert 修正值並補缺口。
+- [x] 實作 rolling refresh/upsert，不再只 append。
+- [x] 跑 simulation/alert/sync/time、完整 backend、Ruff 與 migration smoke tests 並提交。
 
 ### Task 5: API 與前端背景工作體驗
 

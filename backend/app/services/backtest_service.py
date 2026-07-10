@@ -6,7 +6,7 @@
 - 指標：總報酬、年化、最大回撤、勝率、交易數、對比買入持有
 """
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import timedelta
 import math
 
 import pandas as pd
@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import NotFoundError
 from app.models import DailyPrice, Stock
 from app.services.indicator_service import compute_indicators
+from app.services.time_service import market_today
 
 TRADING_DAYS = 252
 
@@ -47,7 +48,7 @@ def run_backtest(
     if stock is None:
         raise NotFoundError(f"尚未追蹤 {market}/{symbol}")
 
-    since = date.today() - timedelta(days=range_days + 120)  # 多抓一段暖機期算指標
+    since = market_today(market) - timedelta(days=range_days + 120)
     rows = db.execute(
         select(DailyPrice)
         .where(DailyPrice.stock_id == stock.id, DailyPrice.date >= since)

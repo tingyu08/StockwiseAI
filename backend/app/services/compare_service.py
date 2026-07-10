@@ -7,13 +7,15 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError
 from app.models import DailyPrice, Stock
+from app.services.time_service import market_today
 
 RANGE_DAYS = {"3m": 90, "6m": 180, "1y": 365}
 TRADING_DAYS_PER_YEAR = 252
 
 
 def compare(db: Session, market: str, symbols: list[str], range_key: str) -> dict:
-    since = date.today() - timedelta(days=RANGE_DAYS[range_key])
+    today = market_today(market)
+    since = today - timedelta(days=RANGE_DAYS[range_key])
     rows = []
     series_map: dict[str, list[dict]] = {}
 
@@ -42,7 +44,7 @@ def compare(db: Session, market: str, symbols: list[str], range_key: str) -> dic
                 "return_1w": _trailing_return(values, 5),
                 "return_1m": _trailing_return(values, 21),
                 "return_3m": _trailing_return(values, 63),
-                "return_ytd": _ytd_return(closes),
+                "return_ytd": _ytd_return(closes, today),
                 "annualized_return": _annualized(values),
                 "volatility": _volatility(values),
                 "last_close": values[-1],
@@ -63,8 +65,8 @@ def _trailing_return(values: list[float], days: int) -> float | None:
     return round((values[-1] - base) / base * 100, 2) if base else None
 
 
-def _ytd_return(closes: list[tuple[date, float]]) -> float | None:
-    year_start = date(date.today().year, 1, 1)
+def _ytd_return(closes: list[tuple[date, float]], today: date) -> float | None:
+    year_start = date(today.year, 1, 1)
     base_points = [c for d, c in closes if d >= year_start]
     if len(base_points) < 2:
         return None

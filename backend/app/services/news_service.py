@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models import AiReport, Stock
 from app.providers.ai.antigravity import AntigravityProvider
+from app.services.time_service import market_today
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ async def run_news_research(
     db: Session, stock: Stock, force: bool = False
 ) -> AiReport:
     """對單檔跑新聞研究。當日已有結果直接回傳（快取，不重複扣額度）。"""
-    today = date.today()
+    today = market_today(stock.market)
     existing = _get_report(db, stock.id, since=today)
     if existing and not force:
         return existing
@@ -53,7 +54,9 @@ async def run_news_research(
 
 def latest_news_report(db: Session, stock: Stock) -> AiReport | None:
     """最近一次（保鮮期內）的新聞研究報告；過期或不存在回 None。"""
-    return _get_report(db, stock.id, since=date.today() - timedelta(days=FRESH_DAYS))
+    return _get_report(
+        db, stock.id, since=market_today(stock.market) - timedelta(days=FRESH_DAYS)
+    )
 
 
 def latest_news_summary(db: Session, stock: Stock) -> str:

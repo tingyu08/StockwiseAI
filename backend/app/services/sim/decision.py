@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.models import AiReport, DailyPrice, SimOrder, Stock, WatchlistItem
 from app.services.sim.engine import calc_fee, get_or_create_account
 from app.services.sim.portfolio import current_positions
+from app.services.time_service import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,7 @@ def run_decisions(db: Session, market: str) -> dict:
 
     created: list[dict] = []
     skipped: list[dict] = []
+    buy_candidates: list[tuple[float, Stock, float, AiReport]] = []
     for stock in managed:
         if _has_pending(db, account.id, stock.id):
             skipped.append({"symbol": stock.symbol, "reason": "已有待成交委託"})
@@ -84,15 +86,27 @@ def run_decisions(db: Session, market: str) -> dict:
             elif confidence < BUY_CONFIDENCE:
                 skipped.append({"symbol": stock.symbol, "reason": f"買進信心 {confidence:.0%} 未達門檻 {BUY_CONFIDENCE:.0%}"})
             else:
-                qty = _size_buy(db, account, equity, last_close, market)
-                if qty <= 0:
-                    skipped.append({"symbol": stock.symbol, "reason": "部位上限/現金保留限制，無可用額度"})
-                else:
-                    db.add(_make_order(account.id, stock.id, "buy", qty, report.id))
-                    created.append({"symbol": stock.symbol, "side": "buy", "qty": qty})
+                buy_candidates.append((confidence, stock, last_close, report))
             continue
 
         skipped.append({"symbol": stock.symbol, "reason": "AI 建議觀望（hold）"})
+
+    available_cash = float(account.cash)
+    for _confidence, stock, last_close, report in sorted(
+        buy_candidates, key=lambda item: (-item[0], item[1].symbol)
+    ):
+        qty = _size_buy(
+            db, account, equity, last_close, market, cash_available=available_cash
+        )
+        if qty <= 0:
+            skipped.append(
+                {"symbol": stock.symbol, "reason": "部位上限/現金保留限制，無可用額度"}
+            )
+            continue
+        gross = qty * last_close
+        available_cash -= gross + calc_fee(market, "buy", gross)
+        db.add(_make_order(account.id, stock.id, "buy", qty, report.id))
+        created.append({"symbol": stock.symbol, "side": "buy", "qty": qty})
 
     db.commit()
     return {
@@ -104,9 +118,18 @@ def run_decisions(db: Session, market: str) -> dict:
     }
 
 
-def _size_buy(db: Session, account, equity: float, price: float, market: str) -> float:
+def _size_buy(
+    db: Session,
+    account,
+    equity: float,
+    price: float,
+    market: str,
+    cash_available: float | None = None,
+) -> float:
     max_value = equity * MAX_POSITION_PCT
-    available = float(account.cash) - equity * MIN_CASH_PCT
+    available = (
+        float(account.cash) if cash_available is None else cash_available
+    ) - equity * MIN_CASH_PCT
     budget = min(max_value, available)
     if budget <= 0:
         return 0.0
@@ -216,4 +239,5 @@ def _make_order(account_id: int, stock_id: int, side: str, qty: float, report_id
         status="pending",
         decided_by="ai",
         ai_report_id=report_id,
+        created_at=utc_now_naive(),
     )

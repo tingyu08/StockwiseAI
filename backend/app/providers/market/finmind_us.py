@@ -12,6 +12,7 @@ import httpx
 import pandas as pd
 
 from app.core.config import get_settings
+from app.services.time_service import market_today
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +31,9 @@ def fetch_daily(symbol: str, start: date | None = None, end: date | None = None)
         "dataset": dataset,
         "data_id": data_id,
         "token": get_settings().finmind_token,
-        "start_date": (start or date.today() - timedelta(days=DEFAULT_LOOKBACK_DAYS)).isoformat(),
+        "start_date": (
+            start or market_today("US") - timedelta(days=DEFAULT_LOOKBACK_DAYS)
+        ).isoformat(),
     }
     if end:
         params["end_date"] = end.isoformat()

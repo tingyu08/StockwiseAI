@@ -11,10 +11,12 @@ from app.core.exceptions import NotFoundError
 from app.models import DailyPrice, Indicator, Stock
 from app.services.indicator_service import compute_indicators
 from app.services.market_gateway import market_data
+from app.services.time_service import market_today
 
 logger = logging.getLogger(__name__)
 
 INITIAL_LOOKBACK_DAYS = 400  # 首次同步抓約 400 天（足夠算 MA60 且涵蓋一年走勢）
+REFRESH_LOOKBACK_DAYS = 14  # 每次重抓近期窗口，接收來源修正並補中間缺口
 
 
 def _clean(value: float | None) -> float | None:
@@ -55,26 +57,52 @@ async def sync_prices(db: Session, stock: Stock) -> int:
         .limit(1)
     ).scalar_one_or_none()
 
-    start = (last + timedelta(days=1)) if last else date.today() - timedelta(days=INITIAL_LOOKBACK_DAYS)
-    today = date.today()
+    today = market_today(stock.market)
+    start = (
+        last - timedelta(days=REFRESH_LOOKBACK_DAYS)
+        if last
+        else today - timedelta(days=INITIAL_LOOKBACK_DAYS)
+    )
     if start > today:
         return 0
 
     rows = await market_data.get_daily_prices(stock.market, stock.symbol, start, today)
-    new_rows = [r for r in rows if last is None or r.date > last]
-    for r in new_rows:
-        db.add(
-            DailyPrice(
-                stock_id=stock.id, date=r.date,
-                open=r.open, high=r.high, low=r.low, close=r.close, volume=r.volume,
-            )
+    changed = 0
+    for r in rows:
+        existing = db.get(DailyPrice, (stock.id, r.date))
+        values = {
+            "open": r.open,
+            "high": r.high,
+            "low": r.low,
+            "close": r.close,
+            "volume": r.volume,
+        }
+        if existing is None:
+            db.add(DailyPrice(stock_id=stock.id, date=r.date, **values))
+            changed += 1
+            continue
+        before = (
+            _clean_number(existing.open),
+            _clean_number(existing.high),
+            _clean_number(existing.low),
+            _clean_number(existing.close),
+            existing.volume,
         )
-    if new_rows:
+        after = (r.open, r.high, r.low, r.close, r.volume)
+        if before != after:
+            for key, value in values.items():
+                setattr(existing, key, value)
+            changed += 1
+    if changed:
         db.flush()  # session 為 autoflush=False：先 flush 讓指標重算查得到新價格
         _recompute_indicators(db, stock)
     db.commit()
-    logger.info("synced %s/%s: +%d rows", stock.market, stock.symbol, len(new_rows))
-    return len(new_rows)
+    logger.info("synced %s/%s: %d rows changed", stock.market, stock.symbol, changed)
+    return changed
+
+
+def _clean_number(value) -> float | None:
+    return float(value) if value is not None else None
 
 
 def _recompute_indicators(db: Session, stock: Stock) -> None:
