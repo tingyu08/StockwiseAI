@@ -123,6 +123,18 @@ def test_news_api_run_triggers_research(client, monkeypatch):
     assert res.status_code == 200
     assert res.json()["data"]["started"] is True
     assert isinstance(res.json()["data"]["run_id"], int)
+    run_id = res.json()["data"]["run_id"]
+    db = SessionLocal()
+    try:
+        from app.models import JobRun
+
+        run = db.get(JobRun, run_id)
+        assert run.job_type == "news"
+        assert json.loads(run.payload_json) == {"market": "TW", "symbol": "7107"}
+    finally:
+        db.delete(run)
+        db.commit()
+        db.close()
 
 
 def test_extract_output_text_from_steps():

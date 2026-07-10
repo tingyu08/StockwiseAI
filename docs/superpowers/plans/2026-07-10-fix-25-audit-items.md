@@ -58,16 +58,16 @@
 **Interfaces:**
 - Produces: `enqueue_job(type, payload, idempotency_key)`, `claim_next_job()`, `heartbeat_job()`, `recover_stale_jobs()`, `run_worker_loop()`。
 
-- [ ] 新增測試：動態 news/overview 工作保存 type/payload 並可 retry。
-- [ ] 新增測試：相同 idempotency key 只建立一個 queued/running 工作。
-- [ ] 新增測試：過期 running 工作會回 queued 或 failed，超過 attempts 才 failed。
-- [ ] 新增 JobRun payload、idempotency、heartbeat、lease、max_attempts 欄位與 migration。
-- [ ] 抽出 job registry，讓固定排程與動態工作共用 handler。
-- [ ] lifespan 啟動 DB worker loop，關閉時取消並等待。
-- [ ] API 僅 enqueue；GET/retry 使用新 service，不再直接 `create_task()`。
-- [ ] Cron 改為 POST 取得 run_id，再輪詢狀態；每日 sequence 每步成功才前進。
-- [ ] 新聞拆成每檔子工作或單一 orchestrator 追蹤進度，確保 AI batch 等新聞結束。
-- [ ] 跑 job/API tests 並提交。
+- [x] 新增測試：動態 news/overview 工作保存 type/payload 並可 retry。
+- [x] 新增測試：相同 idempotency key 只建立一個 queued/running 工作。
+- [x] 新增測試：過期 running 工作會回 queued 或 failed，超過 attempts 才 failed。
+- [x] 新增 JobRun payload、idempotency、heartbeat、lease、max_attempts 欄位與 migration。
+- [x] 抽出 job registry，讓固定排程與動態工作共用 handler。
+- [x] lifespan 啟動 DB worker loop，關閉時取消並等待。
+- [x] API 僅 enqueue；GET/retry 使用新 service，不再直接 `create_task()`。
+- [x] Cron 改為 POST 取得 run_id，再輪詢狀態；每日 sequence 每步成功才前進。
+- [x] 每日 sequence 先等待 news orchestrator 完成，再執行 AI batch。
+- [x] 跑 job/API、完整 backend、Ruff、migration 與 Cron YAML tests 並提交。
 
 ### Task 3: AI 語意安全、快取與版本
 

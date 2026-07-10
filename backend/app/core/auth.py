@@ -20,10 +20,18 @@ async def require_api_token(request: Request, call_next):
         and path.endswith(":run")
         and not path.startswith("/api/v1/jobs/runs/")
     )
+    is_job_status = request.method == "GET" and path.startswith(
+        "/api/v1/jobs/runs/"
+    )
+    supplied_job_token = request.headers.get("X-Job-Token", "")
+    has_valid_job_token = bool(settings.job_token) and hmac.compare_digest(
+        supplied_job_token, settings.job_token
+    )
     is_public = (
         request.method == "OPTIONS"
         or path in PUBLIC_PATHS
         or is_job_trigger
+        or (is_job_status and has_valid_job_token)
         or not path.startswith("/api/v1/")
     )
     if settings.api_token and not is_public:

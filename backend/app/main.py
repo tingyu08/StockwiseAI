@@ -1,5 +1,6 @@
+import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,12 +18,18 @@ logging.basicConfig(level=logging.INFO)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.services.job_service import run_worker_loop
+
     scheduler = None
+    worker_task = asyncio.create_task(run_worker_loop())
     if get_settings().scheduler_mode == "internal":
         from app.scheduler.jobs import start_scheduler
 
         scheduler = start_scheduler()
     yield
+    worker_task.cancel()
+    with suppress(asyncio.CancelledError):
+        await worker_task
     if scheduler:
         scheduler.shutdown(wait=False)
 
