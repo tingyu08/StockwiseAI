@@ -88,7 +88,8 @@ def test_alert_list_uses_one_query_for_latest_events(client):
             event.remove(engine, "before_cursor_execute", count_query)
 
         assert response.status_code == 200
-        assert len(statements) == 1
+        # One authentication lookup plus one endpoint query.
+        assert len(statements) == 2
     finally:
         db.close()
 

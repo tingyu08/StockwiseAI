@@ -8,10 +8,11 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import (
-    alerts, analysis, backtest, compare, health, jobs, predictions, premium,
+    alerts, analysis, auth, backtest, compare, health, jobs, predictions, premium,
     simulation, stocks, usage, watchlist,
 )
 from app.core.config import get_settings
+from app.core.auth import require_login
 from app.core.exceptions import register_exception_handlers
 from app.core.logging_config import configure_sensitive_logging
 
@@ -59,6 +60,7 @@ def create_app() -> FastAPI:
     app = FastAPI(title="stock-ai-advisor", version="0.1.0", lifespan=lifespan)
 
     app.middleware("http")(add_security_headers)
+    app.middleware("http")(require_login)
 
     app.add_middleware(
         CORSMiddleware,
@@ -69,7 +71,7 @@ def create_app() -> FastAPI:
     register_exception_handlers(app)
 
     for router in (
-        health.router, usage.router, stocks.router, watchlist.router,
+        health.router, auth.router, usage.router, stocks.router, watchlist.router,
         jobs.router, analysis.router, compare.router, premium.router, predictions.router,
         simulation.router, alerts.router, backtest.router,
     ):

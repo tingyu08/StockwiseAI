@@ -17,6 +17,7 @@ dependencies = [
     "yfinance>=0.2.50",
     "exchange-calendars>=4.5",
     "psycopg[binary]>=3.2",
+    "argon2-cffi>=23.1",
 ]
 
 [project.optional-dependencies]

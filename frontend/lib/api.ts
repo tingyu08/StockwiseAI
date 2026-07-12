@@ -1,7 +1,7 @@
 import type { Market } from "@/stores/market";
 
-const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8123";
 const ACTIVE_JOBS_KEY = "stockwise-active-jobs";
+const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
 export interface Envelope<T> {
   success: boolean;
@@ -83,17 +83,22 @@ export async function apiRequest<T>(
   path: string,
   options: ApiRequestOptions = {},
 ): Promise<T> {
-  const url = new URL(`/api/v1${path}`, API_BASE);
-  if (options.market) url.searchParams.set("market", options.market.toUpperCase());
+  const search = new URLSearchParams();
+  if (options.market) search.set("market", options.market.toUpperCase());
   for (const [key, value] of Object.entries(options.params ?? {})) {
-    url.searchParams.set(key, value);
+    search.set(key, value);
   }
+  const query = search.toString();
+  const url = `/api/v1${path}${query ? `?${query}` : ""}`;
 
   const headers: Record<string, string> = {
     Accept: "application/json",
     ...options.headers,
   };
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
+  const method = options.method ?? "GET";
+  const csrfToken = UNSAFE_METHODS.has(method) ? getCookie("stockwise_csrf") : null;
+  if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
 
   const controller = new AbortController();
   let timedOut = false;
@@ -106,10 +111,11 @@ export async function apiRequest<T>(
   let response: Response;
   try {
     response = await fetch(url, {
-      method: options.method ?? "GET",
+      method,
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
       signal: controller.signal,
+      credentials: "include",
     });
   } catch (error) {
     if (timedOut) throw new ApiError("連線等待逾時，請稍後重試", 408);
@@ -129,6 +135,9 @@ export async function apiRequest<T>(
     envelope = null;
   }
   if (!response.ok || !envelope?.success) {
+    if (response.status === 401 && !path.startsWith("/auth/")) {
+      window.dispatchEvent?.(new Event("stockwise:auth-required"));
+    }
     const message = envelope?.error ??
       `服務暫時無法回應（HTTP ${response.status}），請稍後重試`;
     throw new ApiError(message, response.status, parseRetryAfter(response));
@@ -137,6 +146,13 @@ export async function apiRequest<T>(
     throw new ApiError("服務回應格式錯誤，請稍後重試", response.status);
   }
   return envelope.data as T;
+}
+
+function getCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const prefix = `${encodeURIComponent(name)}=`;
+  const item = document.cookie.split("; ").find((value) => value.startsWith(prefix));
+  return item ? decodeURIComponent(item.slice(prefix.length)) : null;
 }
 
 /** 統一 API client：解包 envelope、注入 market 參數、拋出使用者可讀的錯誤。 */

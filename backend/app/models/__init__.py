@@ -1,4 +1,5 @@
 from app.models.alert import Alert, AlertEvent
+from app.models.auth import User, UserSession
 from app.models.analysis import (
     AiOverview,
     AiQuotaReservation,
@@ -14,6 +15,8 @@ from app.models.watchlist import WatchGroup, WatchlistItem
 __all__ = [
     "Alert",
     "AlertEvent",
+    "User",
+    "UserSession",
     "AiOverview",
     "JobRun",
     "WatchGroup",

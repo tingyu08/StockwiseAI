@@ -25,8 +25,9 @@ describe("API client", () => {
     await api.apiGet("/usage");
 
     expect(fetchMock).toHaveBeenCalledWith(
-      expect.anything(),
+      "/api/v1/usage",
       expect.objectContaining({
+        credentials: "include",
         headers: expect.not.objectContaining({ Authorization: expect.anything() }),
       }),
     );
@@ -41,6 +42,7 @@ describe("API client", () => {
 
     const fetchMock = vi.fn().mockResolvedValue(okResponse({ updated: 1 }));
     vi.stubGlobal("fetch", fetchMock);
+    vi.stubGlobal("document", { cookie: "stockwise_csrf=csrf-123" });
 
     await request<{ updated: number }>("/watchlist/reorder", {
       method: "PUT",
@@ -52,7 +54,11 @@ describe("API client", () => {
       expect.objectContaining({
         method: "PUT",
         body: JSON.stringify({ market: "TW", items: [] }),
-        headers: expect.objectContaining({ "Content-Type": "application/json" }),
+        credentials: "include",
+        headers: expect.objectContaining({
+          "Content-Type": "application/json",
+          "X-CSRF-Token": "csrf-123",
+        }),
       }),
     );
   });
@@ -96,7 +102,7 @@ describe("API client", () => {
     });
   });
 
-  it("does not open a removed token UI on unauthorized responses", async () => {
+  it("notifies the login gate when a session expires", async () => {
     const dispatchEvent = vi.fn();
     vi.stubGlobal("window", {
       sessionStorage: { getItem: () => null },
@@ -118,7 +124,9 @@ describe("API client", () => {
     );
 
     await expect(api.apiGet("/usage")).rejects.toMatchObject({ status: 401 });
-    expect(dispatchEvent).not.toHaveBeenCalled();
+    expect(dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "stockwise:auth-required" }),
+    );
   });
 
   it("does not start polling when the job signal is already aborted", async () => {

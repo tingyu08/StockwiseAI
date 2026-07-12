@@ -23,5 +23,18 @@ def _create_schema():
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(app)
+def client(request) -> TestClient:
+    client = TestClient(app)
+    if not request.module.__name__.endswith("test_auth"):
+        response = client.post(
+            "/api/v1/auth/register",
+            json={"username": "test-owner", "password": "test"},
+        )
+        if response.status_code == 409:
+            response = client.post(
+                "/api/v1/auth/login",
+                json={"username": "test-owner", "password": "test"},
+            )
+        assert response.status_code == 200
+        client.headers["X-CSRF-Token"] = client.cookies.get("stockwise_csrf")
+    return client
