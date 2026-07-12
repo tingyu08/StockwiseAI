@@ -206,11 +206,11 @@
 **Interfaces:**
 - Produces: PostgreSQL integration profile、coverage thresholds、核心 E2E、操作/恢復 runbook。
 
-- [ ] 加 backend coverage 與 PostgreSQL integration markers，覆蓋 partial indexes、job lease、quota reservation。
-- [ ] 加 frontend job flow、401、502、simulation E2E/元件測試與 coverage。
-- [ ] 更新架構、時區、queue、cache、alert outbox、部署與故障恢復文件。
-- [ ] 執行完整 backend pytest/Ruff/Alembic upgrade。
-- [ ] 執行完整 frontend Vitest/ESLint/build。
-- [ ] 執行 dependency audits、Docker build、git diff check。
-- [ ] 逐項核對 25 項清單，記錄任何只能在外部 Render/Neon 驗證的剩餘事項。
-- [ ] 使用 superpowers:finishing-a-development-branch 完成分支交付。
+- [x] 加 backend coverage 與 PostgreSQL integration profile，覆蓋 partial indexes、job lease、quota reservation。
+- [x] 加 frontend job flow、401、502、simulation API/元件測試與 coverage。
+- [x] 更新架構、時區、queue、cache、alert outbox、部署與故障恢復文件。
+- [x] 執行完整 backend pytest/Ruff/Alembic upgrade。
+- [x] 執行完整 frontend Vitest/ESLint/build。
+- [ ] 執行 dependency audits、Docker build、git diff check（audit/diff 通過；本機無 Docker，交由 CI）。
+- [x] 逐項核對 25 項清單，記錄任何只能在外部 Render/Neon 驗證的剩餘事項。
+- [x] 使用 superpowers:finishing-a-development-branch 完成分支交付。

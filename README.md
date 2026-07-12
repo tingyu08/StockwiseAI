@@ -25,7 +25,8 @@ docker compose up --build
 # 後端
 cd backend
 python -m venv .venv && .venv\Scripts\activate   # Windows
-pip install -e ".[dev]"
+pip install --require-hashes -r requirements.lock
+pip install -e ".[dev]" --no-deps
 alembic upgrade head
 uvicorn app.main:app --reload        # http://localhost:8000
 
@@ -38,8 +39,8 @@ npm run dev                          # http://localhost:3000
 cd backend && pytest
 
 # 完整驗證
-cd backend && pytest -q && ruff check app tests
-cd ../frontend && npm test && npm run lint && npm run build
+cd backend && pytest -q && ruff check app tests alembic
+cd ../frontend && npm run test:coverage && npm run lint && npm run build
 ```
 
 ## 安全與通知
@@ -48,6 +49,17 @@ cd ../frontend && npm test && npm run lint && npm run build
 - 前端右上角的「API Token」按鈕只將 token 保存在當次瀏覽器 session。
 - 設定 `ALERT_WEBHOOK_URL` 後，價格與 ETF 折溢價警示會以 JSON webhook 送出。
 - 外部排程會寫入 `job_runs`，可查詢 queued/running/succeeded/failed 狀態並重試失敗工作。
+- production 必須設定 `ENVIRONMENT=production`、`API_TOKEN`、`JOB_TOKEN`；缺少任一 token 會拒絕啟動。
+- `/health/live` 只檢查程序，`/health/ready` 會實際檢查 DB；Render health check 使用後者。
+- 長任務會顯示在頁首「工作」中心；換頁後可恢復追蹤，失敗工作可直接重試。
+
+## 維運與故障恢復
+
+- 背景工作由 DB queue 執行，具 idempotency key、lease、heartbeat 與 stale-job recovery；不要以 HTTP request 存活時間判斷任務成敗。
+- GitHub Actions 的排程腳本會等待 `JobRun` 結束才執行下一步；`maintenance` 每週清理 30 天前成功工作、90 天前失敗工作與 90 天前 AI 用量。
+- 新聞/AI 上游逾時時，可在頁首工作中心重試；行情同步會重抓最近 14 天並 upsert，能修正缺口與上游歷史修訂。
+- Render Free 僅使用單一 instance，migration 可在 start command 執行；升級多 instance 前必須改為單一 release/pre-deploy job。
+- 完整修復與外部驗證邊界見 [docs/AUDIT_REMEDIATION.md](docs/AUDIT_REMEDIATION.md)。
 
 ## 主要功能
 

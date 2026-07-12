@@ -41,7 +41,7 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.lock
       - run: pip install --require-hashes -r requirements.lock
-      - run: pip install pytest pytest-asyncio ruff pip-audit
+      - run: pip install pytest pytest-asyncio pytest-cov ruff pip-audit
       - run: pytest -q
       - run: ruff check app tests alembic
       - name: PostgreSQL migration smoke
@@ -63,7 +63,7 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
-      - run: npm test -- --run
+      - run: npm run test:coverage
       - run: npm run lint
       - run: npm run build
       - run: npm audit --audit-level=high

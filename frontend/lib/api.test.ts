@@ -98,6 +98,33 @@ describe("API client", () => {
     });
   });
 
+  it("notifies the UI when the API token is unauthorized", async () => {
+    const dispatchEvent = vi.fn();
+    vi.stubGlobal("window", {
+      sessionStorage: { getItem: () => null },
+      dispatchEvent,
+    });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        headers: { get: () => "application/json" },
+        json: async () => ({
+          success: false,
+          data: null,
+          error: "需要有效的 API Token",
+          meta: null,
+        }),
+      }),
+    );
+
+    await expect(api.apiGet("/usage")).rejects.toMatchObject({ status: 401 });
+    expect(dispatchEvent).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "stockwise:unauthorized" }),
+    );
+  });
+
   it("does not start polling when the job signal is already aborted", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);

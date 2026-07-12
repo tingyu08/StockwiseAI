@@ -8,4 +8,16 @@ export default defineConfig({
   resolve: {
     alias: { "@": path.resolve(__dirname, ".") },
   },
+  test: {
+    coverage: {
+      provider: "v8",
+      reporter: ["text", "json-summary"],
+      thresholds: {
+        statements: 75,
+        branches: 70,
+        functions: 70,
+        lines: 80,
+      },
+    },
+  },
 });
