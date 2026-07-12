@@ -1,12 +1,19 @@
 FROM python:3.12-slim
 
-WORKDIR /srv
-COPY pyproject.toml ./
-COPY app ./app
-COPY alembic ./alembic
-COPY alembic.ini ./
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
 
-RUN pip install --no-cache-dir .
+WORKDIR /srv
+COPY requirements.lock ./
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
+    && addgroup --system app \
+    && adduser --system --ingroup app app
+
+COPY --chown=app:app app ./app
+COPY --chown=app:app alembic ./alembic
+COPY --chown=app:app alembic.ini ./
+
+USER app
 
 EXPOSE 8000
 # 啟動前套用 migration，再起服務

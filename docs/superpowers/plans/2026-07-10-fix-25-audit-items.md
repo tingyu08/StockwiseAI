@@ -184,13 +184,13 @@
 **Interfaces:**
 - Produces: production fail-closed config、security headers、reproducible dependency install、non-root/standalone images、CI gate。
 
-- [ ] 新增測試：production 缺 API_TOKEN/JOB_TOKEN 時 Settings 驗證失敗，development 可空白。
-- [ ] 實作 environment mode、trimmed CORS、security headers、request correlation id 與敏感資訊遮罩。
-- [ ] 產生並驗證 Python lock，Docker 使用 locked install。
-- [ ] Next standalone build、non-root runtime、production dependency-only image。
-- [ ] CI 加 backend tests/Ruff、frontend tests/lint/build、PostgreSQL Alembic smoke、audit、Docker build。
-- [ ] 修正 Render 文件與 health path，migration 保持單實例安全並記錄擴展限制。
-- [ ] 跑 auth/config tests、Docker builds 並提交。
+- [x] 新增測試：production 缺 API_TOKEN/JOB_TOKEN 時 Settings 驗證失敗，development 可空白。
+- [x] 實作 environment mode、trimmed CORS、security headers、request correlation id 與敏感資訊遮罩。
+- [x] 產生並驗證 Python lock，Docker 使用 locked install。
+- [x] Next standalone build、non-root runtime、production dependency-only image。
+- [x] CI 加 backend tests/Ruff、frontend tests/lint/build、PostgreSQL Alembic smoke、audit、Docker build。
+- [x] 修正 Render 文件與 health path，migration 保持單實例安全並記錄擴展限制。
+- [ ] 跑 auth/config tests、Docker builds 並提交（本機無 Docker；build 已交由 CI gate 驗證）。
 
 ### Task 8: 測試覆蓋、文件與總驗收
 

@@ -8,6 +8,7 @@ on:
     - cron: "30 6 * * 1-5"   # 14:30 TW — 台股：同步→撮合→淨值→警示→AI批次→產生委託
     - cron: "40 20 * * 1-5"  # 04:40 TW 次日 — 美股新聞研究（背景執行）
     - cron: "30 21 * * 1-5"  # 05:30 TW 次日 — 美股：同步→撮合→淨值→警示→AI批次→產生委託
+    - cron: "15 19 * * 0"    # 每週一 03:15 TW — 清理過期 operational history
   workflow_dispatch:
     inputs:
       job:
@@ -69,3 +70,9 @@ jobs:
             echo "== $job =="
             bash .github/scripts/run-job.sh "$job"
           done
+
+      - name: Weekly maintenance
+        if: github.event.schedule == '15 19 * * 0'
+        env:
+          JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
+        run: bash .github/scripts/run-job.sh maintenance

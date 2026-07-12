@@ -1,8 +1,10 @@
 import asyncio
 import logging
+import re
+import uuid
 from contextlib import asynccontextmanager, suppress
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import (
@@ -12,8 +14,26 @@ from app.api.v1 import (
 from app.core.config import get_settings
 from app.core.auth import require_api_token
 from app.core.exceptions import register_exception_handlers
+from app.core.logging_config import configure_sensitive_logging
 
 logging.basicConfig(level=logging.INFO)
+REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+
+
+async def add_security_headers(request: Request, call_next):
+    supplied = request.headers.get("X-Request-ID", "")
+    request_id = supplied if REQUEST_ID_PATTERN.fullmatch(supplied) else str(uuid.uuid4())
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+    if get_settings().environment == "production":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
 
 
 @asynccontextmanager
@@ -36,13 +56,15 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()  # fail fast：缺必填環境變數這裡就會炸
+    configure_sensitive_logging(settings)
     app = FastAPI(title="stock-ai-advisor", version="0.1.0", lifespan=lifespan)
 
     app.middleware("http")(require_api_token)
+    app.middleware("http")(add_security_headers)
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=settings.cors_origins.split(","),
+        allow_origins=settings.cors_origin_list,
         allow_methods=["*"],
         allow_headers=["*"],
     )
