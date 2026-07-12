@@ -138,15 +138,26 @@ async def nav_snapshot_daily(market: str) -> dict:
 
 async def alert_check_daily(market: str) -> dict:
     """價格/折溢價警示檢查（於同步與淨值快照之後）。"""
-    from app.services.alert_service import check_alerts, send_alert_notifications
+    from app.services.alert_service import check_alerts, deliver_pending_notifications
 
     db = SessionLocal()
     try:
         result = check_alerts(db, market)
+        notifications = await deliver_pending_notifications(db)
     finally:
         db.close()
-    notifications = await send_alert_notifications(result["events"])
     return {**result, "notifications": notifications}
+
+
+async def maintenance_daily() -> dict:
+    """Apply bounded retention to successful jobs, failures, and AI usage logs."""
+    from app.services.maintenance_service import cleanup_expired_records
+
+    db = SessionLocal()
+    try:
+        return cleanup_expired_records(db)
+    finally:
+        db.close()
 
 
 JOBS = {
@@ -164,6 +175,7 @@ JOBS = {
     "sim-fill-us": lambda: sim_fill_daily("US"),
     "alerts-tw": lambda: alert_check_daily("TW"),
     "alerts-us": lambda: alert_check_daily("US"),
+    "maintenance": maintenance_daily,
 }
 
 
@@ -186,6 +198,7 @@ def start_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(alert_check_daily, CronTrigger(hour=5, minute=50, timezone=TZ), args=["US"])
     scheduler.add_job(ai_batch_daily, CronTrigger(hour=6, minute=0, timezone=TZ), args=["US"])
     scheduler.add_job(sim_decide_daily, CronTrigger(hour=6, minute=15, timezone=TZ), args=["US"])
+    scheduler.add_job(maintenance_daily, CronTrigger(hour=3, minute=15, timezone=TZ))
     scheduler.start()
     logger.info("APScheduler started (internal mode)")
     return scheduler

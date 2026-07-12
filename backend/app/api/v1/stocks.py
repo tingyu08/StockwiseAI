@@ -1,4 +1,4 @@
-from datetime import date, timedelta
+from datetime import timedelta
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -12,6 +12,7 @@ from app.core.exceptions import NotFoundError
 from app.models import DailyPrice, Indicator, Stock
 from app.services.market_gateway import market_data
 from app.services.sync_service import ensure_stock, sync_prices
+from app.services.time_service import market_today
 
 router = APIRouter(tags=["stocks"])
 
@@ -69,7 +70,7 @@ async def get_prices(
     if stock is None:
         raise NotFoundError(f"尚未追蹤 {market}/{symbol}，請先透過搜尋加入")
 
-    since = date.today() - timedelta(days=RANGE_DAYS[range_])
+    since = market_today(market) - timedelta(days=RANGE_DAYS[range_])
     prices = db.execute(
         select(DailyPrice)
         .where(DailyPrice.stock_id == stock.id, DailyPrice.date >= since)

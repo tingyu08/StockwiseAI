@@ -19,6 +19,7 @@ class AiReport(Base):
     provider: Mapped[str] = mapped_column(String(32))
     model: Mapped[str] = mapped_column(String(64))
     prompt_version: Mapped[str] = mapped_column(String(16))
+    input_hash: Mapped[str] = mapped_column(String(64), default="")
     kind: Mapped[str] = mapped_column(String(8))  # 'routine' | 'deep' | 'news'
     action: Mapped[str | None] = mapped_column(String(4))  # 'buy' | 'sell' | 'hold'
     confidence: Mapped[float | None] = mapped_column(Numeric(4, 3))
@@ -28,10 +29,19 @@ class AiReport(Base):
 
 class Prediction(Base):
     __tablename__ = "predictions"
+    __table_args__ = (
+        UniqueConstraint(
+            "stock_id",
+            "trade_date",
+            "horizon_days",
+            "method",
+            name="uq_predictions_identity",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True)
     stock_id: Mapped[int] = mapped_column(ForeignKey("stocks.id"), index=True)
-    trade_date: Mapped[date] = mapped_column(Date)
+    trade_date: Mapped[date] = mapped_column(Date, index=True)
     horizon_days: Mapped[int] = mapped_column(Integer)  # 5 | 20
     method: Mapped[str] = mapped_column(String(32))  # 'regression' | 'prophet' | 'ai'
     predicted_json: Mapped[str] = mapped_column(Text)
@@ -48,6 +58,8 @@ class AiOverview(Base):
     market: Mapped[str] = mapped_column(String(2))
     trade_date: Mapped[date] = mapped_column(Date)
     model: Mapped[str] = mapped_column(String(64))
+    prompt_version: Mapped[str] = mapped_column(String(16), default="v1")
+    input_hash: Mapped[str] = mapped_column(String(64), default="")
     payload_json: Mapped[str] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
@@ -61,3 +73,16 @@ class AiUsageLog(Base):
     input_tokens: Mapped[int | None] = mapped_column(Integer)
     output_tokens: Mapped[int | None] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+
+class AiQuotaReservation(Base):
+    """In-flight AI request counted before the provider call is sent."""
+
+    __tablename__ = "ai_quota_reservations"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    model: Mapped[str] = mapped_column(String(64), index=True)
+    estimated_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, server_default=func.now(), index=True
+    )

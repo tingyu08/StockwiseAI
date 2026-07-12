@@ -87,6 +87,18 @@ def test_overview_run_starts_background_job(client, monkeypatch):
     assert res.status_code == 200
     assert res.json()["data"]["started"] is True
     assert isinstance(res.json()["data"]["run_id"], int)
+    run_id = res.json()["data"]["run_id"]
+    db = SessionLocal()
+    try:
+        from app.models import JobRun
+
+        run = db.get(JobRun, run_id)
+        assert run.job_type == "overview"
+        assert json.loads(run.payload_json) == {"market": "US"}
+    finally:
+        db.delete(run)
+        db.commit()
+        db.close()
 
 
 def test_watchlist_rejects_group_from_another_market(client):

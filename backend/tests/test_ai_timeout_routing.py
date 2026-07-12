@@ -1,5 +1,6 @@
 import httpx
 import pytest
+from sqlalchemy import delete, func, select
 
 from app.core.db import SessionLocal
 from app.core.exceptions import UpstreamError
@@ -7,6 +8,7 @@ from app.providers.ai import antigravity, router
 from app.providers.ai.antigravity import AntigravityProvider
 from app.providers.ai.gemini import GeminiProvider
 from app.providers.ai.schemas import AnalysisReport
+from app.models.analysis import AiQuotaReservation, AiUsageLog
 
 
 async def test_gemini_read_timeout_becomes_fallback_eligible(monkeypatch):
@@ -65,10 +67,118 @@ async def test_antigravity_poll_retries_a_read_timeout(monkeypatch):
         result = await AntigravityProvider(db)._wait({"id": "job-1", "status": "in_progress"})
     finally:
         db.close()
-
     assert result["status"] == "completed"
     assert calls == 2
 
+
+async def test_gemini_timeout_is_counted_and_releases_reservation(monkeypatch):
+    model = "gemini-3.5-flash"
+
+    class TimeoutClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *args, **kwargs):
+            raise httpx.ReadTimeout("upstream stalled")
+
+    monkeypatch.setattr("app.providers.ai.gemini.httpx.AsyncClient", lambda **kw: TimeoutClient())
+    db = SessionLocal()
+    try:
+        db.execute(delete(AiUsageLog).where(AiUsageLog.model == model))
+        db.execute(delete(AiQuotaReservation).where(AiQuotaReservation.model == model))
+        db.commit()
+        with pytest.raises(UpstreamError):
+            await GeminiProvider(model, db)._call_api("prompt", AnalysisReport)
+
+        usage = db.execute(
+            select(func.count()).select_from(AiUsageLog).where(AiUsageLog.model == model)
+        ).scalar_one()
+        active = db.execute(
+            select(func.count())
+            .select_from(AiQuotaReservation)
+            .where(AiQuotaReservation.model == model)
+        ).scalar_one()
+        assert usage == 1
+        assert active == 0
+    finally:
+        db.execute(delete(AiUsageLog).where(AiUsageLog.model == model))
+        db.execute(delete(AiQuotaReservation).where(AiQuotaReservation.model == model))
+        db.commit()
+        db.close()
+async def test_antigravity_deadline_counts_http_timeout_wall_clock(monkeypatch):
+    now = 0.0
+    calls = 0
+
+    class TimeoutClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, *args, **kwargs):
+            nonlocal now, calls
+            calls += 1
+            now += 30
+            raise httpx.ReadTimeout("poll stalled")
+
+    async def advance(seconds):
+        nonlocal now
+        now += seconds
+
+    monkeypatch.setattr(antigravity.httpx, "AsyncClient", lambda **kw: TimeoutClient())
+    monkeypatch.setattr(antigravity.asyncio, "sleep", advance)
+    monkeypatch.setattr(antigravity, "monotonic", lambda: now, raising=False)
+    monkeypatch.setattr(antigravity, "MAX_WAIT_SEC", 10)
+    db = SessionLocal()
+    try:
+        with pytest.raises(UpstreamError, match="逾時"):
+            await AntigravityProvider(db)._wait(
+                {"id": "job-deadline", "status": "in_progress"}
+            )
+        assert calls == 1
+    finally:
+        db.close()
+
+
+async def test_antigravity_create_timeout_is_counted(monkeypatch):
+    model = antigravity.AGENT_ID
+
+    class TimeoutClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *args, **kwargs):
+            raise httpx.ConnectTimeout("create stalled")
+
+    monkeypatch.setattr(antigravity.httpx, "AsyncClient", lambda **kw: TimeoutClient())
+    db = SessionLocal()
+    try:
+        db.execute(delete(AiUsageLog).where(AiUsageLog.model == model))
+        db.execute(delete(AiQuotaReservation).where(AiQuotaReservation.model == model))
+        db.commit()
+        with pytest.raises(UpstreamError):
+            await AntigravityProvider(db).research_news("2330", "台積電", "TW")
+
+        assert db.execute(
+            select(func.count()).select_from(AiUsageLog).where(AiUsageLog.model == model)
+        ).scalar_one() == 1
+        assert db.execute(
+            select(func.count())
+            .select_from(AiQuotaReservation)
+            .where(AiQuotaReservation.model == model)
+        ).scalar_one() == 0
+    finally:
+        db.execute(delete(AiUsageLog).where(AiUsageLog.model == model))
+        db.execute(delete(AiQuotaReservation).where(AiQuotaReservation.model == model))
+        db.commit()
+        db.close()
 
 async def test_trading_analysis_prefers_gemini_35(monkeypatch):
     used_models = []

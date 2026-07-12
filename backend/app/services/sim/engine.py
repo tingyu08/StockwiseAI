@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models import DailyPrice, SimAccount, SimOrder, Stock
 from app.services.sim.portfolio import current_positions
+from app.services.time_service import market_date_from_utc
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +77,7 @@ def fill_pending_orders(db: Session, market: str) -> dict:
             select(DailyPrice)
             .where(
                 DailyPrice.stock_id == stock.id,
-                DailyPrice.date > order.created_at.date(),
+                DailyPrice.date > market_date_from_utc(order.created_at, market),
                 DailyPrice.open.is_not(None),
             )
             .order_by(DailyPrice.date)
@@ -91,13 +92,9 @@ def fill_pending_orders(db: Session, market: str) -> dict:
         qty = float(order.qty)
 
         if order.side == "buy":
-            # 現金不足則縮量（台股整數股、美股兩位小數）
-            while qty > 0:
-                gross = qty * open_price
-                fee = calc_fee(market, "buy", gross)
-                if gross + fee <= float(account.cash):
-                    break
-                qty = float(int(qty - 1)) if market == "TW" else round(qty - 0.01, 2)
+            qty = _affordable_qty(
+                float(account.cash), open_price, market, max_qty=qty
+            )
             if qty <= 0:
                 _reject(order, "開盤價高於預期，現金不足")
                 rejected += 1
@@ -146,3 +143,25 @@ def _claim_pending_order(db: Session, order_id: int) -> bool:
         .execution_options(synchronize_session=False)
     )
     return result.rowcount == 1
+
+
+def _affordable_qty(
+    cash: float, price: float, market: str, max_qty: float | None = None
+) -> float:
+    """Largest affordable whole/fractional quantity via O(log n) search."""
+    if cash <= 0 or price <= 0:
+        return 0.0
+    scale = 1 if market == "TW" else 100
+    high = int(cash / price * scale)
+    if max_qty is not None:
+        high = min(high, int(max_qty * scale + 1e-9))
+    low = 0
+    while low < high:
+        mid = (low + high + 1) // 2
+        qty = mid / scale
+        gross = qty * price
+        if gross + calc_fee(market, "buy", gross) <= cash + 1e-9:
+            low = mid
+        else:
+            high = mid - 1
+    return float(low) if market == "TW" else round(low / scale, 2)

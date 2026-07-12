@@ -14,34 +14,39 @@ from sqlalchemy.orm import Session
 
 from app.models import AiReport, Stock
 from app.providers.ai.antigravity import AntigravityProvider
+from app.services.time_service import market_today
 
 logger = logging.getLogger(__name__)
 
 FRESH_DAYS = 4  # 超過 4 天的新聞摘要不再注入分析（跨週末仍可用）
 
 
-async def run_news_research(db: Session, stock: Stock) -> AiReport:
+async def run_news_research(
+    db: Session, stock: Stock, force: bool = False
+) -> AiReport:
     """對單檔跑新聞研究。當日已有結果直接回傳（快取，不重複扣額度）。"""
-    today = date.today()
+    today = market_today(stock.market)
     existing = _get_report(db, stock.id, since=today)
-    if existing:
+    if existing and not force:
         return existing
 
     provider = AntigravityProvider(db)
-    summary = await provider.research_news(stock.symbol, stock.name, stock.market)
+    summary = (
+        await provider.research_news(stock.symbol, stock.name, stock.market)
+    ).strip()[:2000]
 
-    row = AiReport(
-        stock_id=stock.id,
-        trade_date=today,
-        provider=provider.provider_name,
-        model=provider.model_name,
-        prompt_version="news-v1",
-        kind="news",
-        action=None,
-        confidence=None,
-        payload_json=json.dumps({"summary": summary}, ensure_ascii=False),
-    )
-    db.add(row)
+    if existing is None:
+        row = AiReport(stock_id=stock.id, trade_date=today, kind="news")
+        db.add(row)
+    else:
+        row = existing
+    row.provider = provider.provider_name
+    row.model = provider.model_name
+    row.prompt_version = "news-v2"
+    row.input_hash = ""
+    row.action = None
+    row.confidence = None
+    row.payload_json = json.dumps({"summary": summary}, ensure_ascii=False)
     db.commit()
     db.refresh(row)
     return row
@@ -49,7 +54,9 @@ async def run_news_research(db: Session, stock: Stock) -> AiReport:
 
 def latest_news_report(db: Session, stock: Stock) -> AiReport | None:
     """最近一次（保鮮期內）的新聞研究報告；過期或不存在回 None。"""
-    return _get_report(db, stock.id, since=date.today() - timedelta(days=FRESH_DAYS))
+    return _get_report(
+        db, stock.id, since=market_today(stock.market) - timedelta(days=FRESH_DAYS)
+    )
 
 
 def latest_news_summary(db: Session, stock: Stock) -> str:

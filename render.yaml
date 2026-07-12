@@ -1,21 +1,24 @@
 # Render Blueprint — 方案 B 後端（docs/SD.md §6.2）
 # 免費層限制：15 分鐘無流量休眠（GH Actions cron 觸發時順便喚醒）、
 # LB 約 100 秒切斷回應（長任務走 jobs API 的 background 模式）、
-# 無 preDeployCommand → migration 併入 startCommand。
+# 免費方案無 preDeployCommand → migration 併入 startCommand；僅適用單一 instance。
+# 若升級為多 instance，應改成單獨 release/pre-deploy job，避免並行 migration。
 services:
   - type: web
     name: stockwise-backend
     runtime: python
     plan: free
     rootDir: backend
-    buildCommand: pip install .
+    buildCommand: pip install --require-hashes -r requirements.lock
     startCommand: alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /api/v1/health
+    healthCheckPath: /api/v1/health/ready
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.7
       - key: SCHEDULER_MODE
         value: external          # 排程一律由 GitHub Actions cron 觸發
+      - key: ENVIRONMENT
+        value: production        # 缺 API_TOKEN/JOB_TOKEN 時拒絕啟動
       - key: DATABASE_URL
         sync: false              # Neon 連線字串，於 dashboard 填入
       - key: GEMINI_API_KEY

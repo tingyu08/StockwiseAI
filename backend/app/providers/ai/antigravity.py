@@ -8,14 +8,14 @@
 """
 import asyncio
 import logging
+from time import monotonic
 
 import httpx
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.exceptions import UpstreamError
-from app.core.rate_limiter import ensure_quota
-from app.models.analysis import AiUsageLog
+from app.core.rate_limiter import finalize_quota, reserve_quota
 
 logger = logging.getLogger(__name__)
 
@@ -32,9 +32,9 @@ NEWS_PROMPT_TEMPLATE = """你是一位財經新聞研究員。請搜尋「{name}
 
 輸出要求（繁體中文純文字，不要 Markdown 標題）：
 1. 第一行：一句話總結近期新聞面基調（偏多／偏空／中性，與原因）
-2. 接著列出 2~5 條重要事件，每條一行，格式「MM/DD 事件摘要（來源媒體）」
+2. 接著列出 2~5 條重要事件，每條一行，格式「MM/DD 事件摘要（來源媒體｜來源 URL）」
 3. 只寫有明確來源的事實，不要推測與投資建議；找不到重要新聞就寫「近 7 天無重大新聞」
-4. 全文控制在 300 字以內"""
+4. 全文控制在 600 字以內，URL 不計入字數"""
 
 _MARKET_LABELS = {"TW": "台灣", "US": "美國"}
 
@@ -48,13 +48,26 @@ class AntigravityProvider:
 
     async def research_news(self, symbol: str, name: str, market: str) -> str:
         """搜尋個股近期新聞，回傳純文字摘要。額度不足丟 QuotaExceededError。"""
-        ensure_quota(self.db, self.model_name)
+        reservation_id = reserve_quota(self.db, self.model_name)
         prompt = NEWS_PROMPT_TEMPLATE.format(
             name=name, symbol=symbol, market_label=_MARKET_LABELS.get(market, market)
         )
-        interaction = await self._create(prompt)
-        interaction = await self._wait(interaction)
-        self._log_usage(interaction)
+        try:
+            interaction = await self._create(prompt)
+            interaction = await self._wait(interaction)
+        except Exception:
+            finalize_quota(
+                self.db, reservation_id, provider=self.provider_name
+            )
+            raise
+        usage = interaction.get("usage") or {}
+        finalize_quota(
+            self.db,
+            reservation_id,
+            provider=self.provider_name,
+            input_tokens=_to_int(usage.get("total_input_tokens")),
+            output_tokens=_to_int(usage.get("total_output_tokens")),
+        )
 
         text = _extract_output_text(interaction)
         if not text:
@@ -101,17 +114,21 @@ class AntigravityProvider:
         if not interaction_id:
             raise UpstreamError("Antigravity 回應缺少 interaction id")
 
-        waited = 0
+        deadline = monotonic() + MAX_WAIT_SEC
         async with httpx.AsyncClient(timeout=30) as client:
             while interaction.get("status") in ("in_progress", None, "queued"):
-                if waited >= MAX_WAIT_SEC:
+                remaining = deadline - monotonic()
+                if remaining <= 0:
                     raise UpstreamError(f"Antigravity 任務逾時（>{MAX_WAIT_SEC}s）")
-                await asyncio.sleep(POLL_INTERVAL_SEC)
-                waited += POLL_INTERVAL_SEC
+                await asyncio.sleep(min(POLL_INTERVAL_SEC, remaining))
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    raise UpstreamError(f"Antigravity 任務逾時（>{MAX_WAIT_SEC}s）")
                 try:
                     res = await client.get(
                         f"{INTERACTIONS_URL}/{interaction_id}",
                         headers={"x-goog-api-key": settings.gemini_api_key},
+                        timeout=min(30, remaining),
                     )
                 except httpx.TimeoutException:
                     logger.warning(
@@ -130,20 +147,6 @@ class AntigravityProvider:
             logger.error("Antigravity 任務未完成: %s", str(interaction)[:500])
             raise UpstreamError(f"Antigravity 任務狀態異常（{interaction.get('status')}）")
         return interaction
-
-    def _log_usage(self, interaction: dict) -> None:
-        # 實測回應：usage.total_input_tokens / total_output_tokens（值為字串）
-        usage = interaction.get("usage") or {}
-        self.db.add(
-            AiUsageLog(
-                provider=self.provider_name,
-                model=self.model_name,
-                input_tokens=_to_int(usage.get("total_input_tokens")),
-                output_tokens=_to_int(usage.get("total_output_tokens")),
-            )
-        )
-        self.db.commit()
-
 
 def _extract_output_text(interaction: dict) -> str:
     """實測 background interaction 的 GET 回應沒有頂層 output_text，

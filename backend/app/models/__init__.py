@@ -1,5 +1,11 @@
 from app.models.alert import Alert, AlertEvent
-from app.models.analysis import AiOverview, AiReport, AiUsageLog, Prediction
+from app.models.analysis import (
+    AiOverview,
+    AiQuotaReservation,
+    AiReport,
+    AiUsageLog,
+    Prediction,
+)
 from app.models.job import JobRun
 from app.models.simulation import SimAccount, SimOrder
 from app.models.stock import DailyPrice, EtfNav, Indicator, Stock
@@ -18,6 +24,7 @@ __all__ = [
     "AiReport",
     "Prediction",
     "AiUsageLog",
+    "AiQuotaReservation",
     "SimAccount",
     "SimOrder",
     "WatchlistItem",

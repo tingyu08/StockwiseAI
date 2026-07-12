@@ -7,6 +7,16 @@
 
 **文件結構**：本文件（產品計畫）｜[docs/SA.md](docs/SA.md)（系統分析：使用案例、功能/非功能需求）｜[docs/SD.md](docs/SD.md)（系統設計：技術決策 ADR、前後端目錄結構、API 規格、DB Schema、部署設計）
 
+## 2026-07-12 穩定性里程碑
+
+- [x] AI quota reservation、洛杉磯 RPD reset、timeout accounting 與 provider retry。
+- [x] 可恢復 DB job queue、工作中心、manual retry 與依序等待的外部排程。
+- [x] AI 語意驗證、prompt-injection 邊界、input-hash cache invalidation。
+- [x] 市場時區、rolling sync、模擬現金預留、alert outbox 與 retention。
+- [x] production fail-closed、健康檢查、依賴鎖定、CI/audit 與 non-root images。
+
+逐項證據與仍需部署環境確認的邊界見 [AUDIT_REMEDIATION.md](AUDIT_REMEDIATION.md)。
+
 ---
 
 ## 1. 產品功能總覽

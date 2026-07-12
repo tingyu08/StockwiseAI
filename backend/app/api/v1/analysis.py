@@ -1,16 +1,15 @@
-import asyncio
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.core.db import SessionLocal, get_db
+from app.core.db import get_db
 from app.core.envelope import Envelope, ok
 from app.core.exceptions import NotFoundError
 from app.models import Stock
 from app.services import analysis_service
-from app.api.v1.jobs import create_job_run, execute_job_run
+from app.services.job_service import enqueue_job
 
 router = APIRouter(tags=["analysis"])
 
@@ -46,20 +45,20 @@ async def get_overview(
 
 @router.post("/analysis/overview:run", response_model=Envelope)
 async def run_overview(
-    market: Literal["TW", "US"] = Query(...), db: Session = Depends(get_db)
+    market: Literal["TW", "US"] = Query(...),
+    force: bool = Query(False),
+    db: Session = Depends(get_db),
 ) -> Envelope:
     """背景執行全部自選批次分析＋總評，避免長連線被平台中斷。"""
-    run_id = create_job_run(f"overview-{market.lower()}")
-
-    async def job() -> dict:
-        job_db = SessionLocal()
-        try:
-            overview = await analysis_service.run_overview(job_db, market)
-            return analysis_service.overview_dto(overview)
-        finally:
-            job_db.close()
-
-    asyncio.create_task(execute_job_run(run_id, job))
+    payload = {"market": market}
+    if force:
+        payload["force"] = True
+    run_id = enqueue_job(
+        f"overview-{market.lower()}",
+        job_type="overview",
+        payload=payload,
+        idempotency_key=f"overview:{market}",
+    )
     return ok({"started": True, "job": f"overview-{market.lower()}", "run_id": run_id})
 
 
@@ -123,25 +122,18 @@ async def get_news(
 async def run_news(
     symbol: str,
     market: Literal["TW", "US"] = Query(...),
+    force: bool = Query(False),
     db: Session = Depends(get_db),
 ) -> Envelope:
     """背景觸發 Antigravity 新聞研究，避免長連線被平台中斷。"""
-    from app.services import news_service
-
-    stock = _get_stock(db, market, symbol)
-    stock_id = stock.id
-    run_id = create_job_run(f"news-{market.lower()}-{symbol}")
-
-    async def job() -> dict:
-        job_db = SessionLocal()
-        try:
-            job_stock = job_db.get(Stock, stock_id)
-            if job_stock is None:
-                raise NotFoundError(f"尚未追蹤 {market}/{symbol}")
-            report = await news_service.run_news_research(job_db, job_stock)
-            return news_service.news_dto(report)
-        finally:
-            job_db.close()
-
-    asyncio.create_task(execute_job_run(run_id, job))
+    _get_stock(db, market, symbol)
+    payload = {"market": market, "symbol": symbol}
+    if force:
+        payload["force"] = True
+    run_id = enqueue_job(
+        f"news-{market.lower()}-{symbol}",
+        job_type="news",
+        payload=payload,
+        idempotency_key=f"news:{market}:{symbol}",
+    )
     return ok({"started": True, "job": f"news-{market.lower()}-{symbol}", "run_id": run_id})

@@ -125,6 +125,13 @@ backend/
 設定 `API_TOKEN` 後，除 `/health` 與排程觸發端點外，所有 API 皆需
 `Authorization: Bearer <API_TOKEN>`。排程觸發仍獨立使用 `X-Job-Token`。
 
+長任務不在 request process 內執行：API 建立 `job_runs` 後立即回傳 `run_id`，worker 以
+lease/heartbeat claim 工作；程序中斷後會重新排隊。active idempotency partial index 防止同一工作
+重複排入。前端將 active run id 存在 sessionStorage，頁首工作中心負責恢復輪詢與 retry。
+
+分析快取身份為 `(stock, trade_date, kind, prompt_version, input_hash)`；行情、指標、新聞或 prompt
+任一變更都會重建。新聞文字視為不可信輸入並置於明確資料邊界，AI 結果落地前經語意驗證。
+
 ### 3.3 資料庫 Schema（DDL 摘要）
 
 ```sql
@@ -196,6 +203,18 @@ CREATE TABLE ai_usage_log (
 ```
 
 索引：`daily_prices(stock_id, date DESC)`、`ai_reports(trade_date)`、`ai_usage_log(created_at)`。
+
+警示採 outbox：先唯一寫入 `(alert_id, trade_date)` 的 `alert_events`，通知成功才標記 sent；失敗保留
+pending 供下次重送。Prediction identity 由 `(stock_id, trade_date, horizon_days, method)` 唯一約束保證。
+
+### 3.4 健康、保留與安全
+
+- `GET /health/live`：程序存活；`GET /health/ready`：執行 `SELECT 1` 驗證 DB。
+- `/data-status` 分開行情、NAV、news/routine/trade 日期與最近成功工作。
+- retention：成功 JobRun 30 天、失敗 JobRun 90 天、AI usage 90 天；queued/running 不清除。
+- production 缺 `API_TOKEN` 或 `JOB_TOKEN` 直接拒絕啟動；CORS 不允許 `*`。
+- API 回應加入 request ID、CSP、nosniff、frame deny、referrer/permissions policy；日誌 filter 遮蔽 secrets。
+- Python runtime 由 hash lock 安裝；前後端 runtime container 都使用 non-root user，Next 採 standalone output。
 
 ## 4. 前端詳細設計
 

@@ -2,26 +2,33 @@
 
 from datetime import datetime, time, timedelta, timezone
 from zoneinfo import ZoneInfo
+from collections import defaultdict
+from threading import Lock
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.exceptions import QuotaExceededError
-from app.models.analysis import AiUsageLog
+from app.models.analysis import AiQuotaReservation, AiUsageLog
 
-TAIPEI = ZoneInfo("Asia/Taipei")
+GOOGLE_QUOTA_TZ = ZoneInfo("America/Los_Angeles")
+_LOCAL_LOCKS: defaultdict[str, Lock] = defaultdict(Lock)
 
 
-def taipei_day_bounds_utc(now: datetime | None = None) -> tuple[datetime, datetime]:
-    """Return the current Taipei calendar-day bounds as naive UTC values."""
+def provider_day_bounds_utc(now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Return Google's current Pacific quota-day bounds as naive UTC values."""
     now = now or datetime.now(timezone.utc)
     if now.tzinfo is None:
         now = now.replace(tzinfo=timezone.utc)
-    local_day = now.astimezone(TAIPEI).date()
-    start_local = datetime.combine(local_day, time.min, tzinfo=TAIPEI)
+    local_day = now.astimezone(GOOGLE_QUOTA_TZ).date()
+    start_local = datetime.combine(local_day, time.min, tzinfo=GOOGLE_QUOTA_TZ)
+    end_local = datetime.combine(
+        local_day + timedelta(days=1), time.min, tzinfo=GOOGLE_QUOTA_TZ
+    )
     start = start_local.astimezone(timezone.utc).replace(tzinfo=None)
-    return start, start + timedelta(days=1)
+    end = end_local.astimezone(timezone.utc).replace(tzinfo=None)
+    return start, end
 
 
 def _utc_now_naive() -> datetime:
@@ -29,7 +36,7 @@ def _utc_now_naive() -> datetime:
 
 
 def used_today(db: Session, model: str, now: datetime | None = None) -> int:
-    start, end = taipei_day_bounds_utc(now)
+    start, end = provider_day_bounds_utc(now)
     stmt = (
         select(func.count())
         .select_from(AiUsageLog)
@@ -37,7 +44,17 @@ def used_today(db: Session, model: str, now: datetime | None = None) -> int:
         .where(AiUsageLog.created_at >= start)
         .where(AiUsageLog.created_at < end)
     )
-    return db.execute(stmt).scalar_one()
+    completed = db.execute(stmt).scalar_one()
+    active = db.execute(
+        select(func.count())
+        .select_from(AiQuotaReservation)
+        .where(
+            AiQuotaReservation.model == model,
+            AiQuotaReservation.created_at >= start,
+            AiQuotaReservation.created_at < end,
+        )
+    ).scalar_one()
+    return completed + active
 
 
 def remaining_today(db: Session, model: str) -> int:
@@ -71,6 +88,15 @@ def ensure_quota(
     rpm_used = db.execute(
         select(func.count()).select_from(AiUsageLog).where(*window)
     ).scalar_one()
+    rpm_used += db.execute(
+        select(func.count())
+        .select_from(AiQuotaReservation)
+        .where(
+            AiQuotaReservation.model == model,
+            AiQuotaReservation.created_at >= minute_start,
+            AiQuotaReservation.created_at <= now,
+        )
+    ).scalar_one()
     if rpm_used + needed > quota.rpm:
         raise QuotaExceededError(f"{model} RPM 額度已用盡")
 
@@ -85,5 +111,66 @@ def ensure_quota(
             )
         ).where(*window)
     ).scalar_one()
-    if int(tokens_used) + estimated_tokens > quota.tpm:
+    reserved_tokens = db.execute(
+        select(func.coalesce(func.sum(AiQuotaReservation.estimated_tokens), 0)).where(
+            AiQuotaReservation.model == model,
+            AiQuotaReservation.created_at >= minute_start,
+            AiQuotaReservation.created_at <= now,
+        )
+    ).scalar_one()
+    if int(tokens_used) + int(reserved_tokens) + estimated_tokens > quota.tpm:
         raise QuotaExceededError(f"{model} TPM 額度已用盡")
+
+
+def reserve_quota(db: Session, model: str, estimated_tokens: int = 0) -> int:
+    """Atomically reserve one provider request before sending it."""
+    with _LOCAL_LOCKS[model]:
+        if db.bind is not None and db.bind.dialect.name == "postgresql":
+            db.execute(
+                select(
+                    func.pg_advisory_xact_lock(
+                        func.hashtext(f"stockwise-ai-quota:{model}")
+                    )
+                )
+            )
+        ensure_quota(db, model, estimated_tokens=estimated_tokens)
+        reservation = AiQuotaReservation(
+            model=model, estimated_tokens=max(0, estimated_tokens)
+        )
+        db.add(reservation)
+        db.commit()
+        db.refresh(reservation)
+        return reservation.id
+
+
+def finalize_quota(
+    db: Session,
+    reservation_id: int,
+    *,
+    provider: str,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+) -> None:
+    """Convert an in-flight reservation into an immutable usage record."""
+    reservation = db.get(AiQuotaReservation, reservation_id)
+    if reservation is None:
+        return
+    db.add(
+        AiUsageLog(
+            provider=provider,
+            model=reservation.model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            created_at=reservation.created_at,
+        )
+    )
+    db.delete(reservation)
+    db.commit()
+
+
+def cancel_quota(db: Session, reservation_id: int) -> None:
+    """Release a reservation only when the request was never sent."""
+    reservation = db.get(AiQuotaReservation, reservation_id)
+    if reservation is not None:
+        db.delete(reservation)
+        db.commit()

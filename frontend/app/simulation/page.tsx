@@ -28,6 +28,12 @@ export default function SimulationPage() {
   const { data: account, isLoading } = useSimAccount();
   const { data: orders } = useSimOrders();
   const runStep = useRunSimStep();
+  const [activeStep, setActiveStep] = useState<"decide" | "fill" | null>(null);
+
+  const run = (step: "decide" | "fill") => {
+    setActiveStep(step);
+    runStep.mutate(step, { onSettled: () => setActiveStep(null) });
+  };
 
   const pnlPositive = (account?.total_pnl ?? 0) >= 0;
   const upCls = market === "tw" ? "text-red-500" : "text-green-500";
@@ -40,20 +46,20 @@ export default function SimulationPage() {
           <h2 className="text-lg font-semibold">🤖 AI 模擬交易帳戶</h2>
           <div className="flex gap-2">
             <button
-              onClick={() => runStep.mutate("decide")}
+              onClick={() => run("decide")}
               disabled={runStep.isPending}
               className="rounded-md border border-neutral-300 px-3 py-1 text-xs hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800"
               title="依最新 AI 報告產生委託單（正式流程由每日排程執行）"
             >
-              手動觸發決策
+              {activeStep === "decide" ? "AI 分析與決策中…" : "手動觸發決策"}
             </button>
             <button
-              onClick={() => runStep.mutate("fill")}
+              onClick={() => run("fill")}
               disabled={runStep.isPending}
               className="rounded-md border border-neutral-300 px-3 py-1 text-xs hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800"
               title="以次一交易日開盤價撮合 pending 單"
             >
-              手動撮合
+              {activeStep === "fill" ? "撮合中…" : "手動撮合"}
             </button>
           </div>
         </div>
