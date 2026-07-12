@@ -1,7 +1,6 @@
 import type { Market } from "@/stores/market";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8123";
-export const API_TOKEN_KEY = "stockwise-api-token";
 const ACTIVE_JOBS_KEY = "stockwise-active-jobs";
 
 export interface Envelope<T> {
@@ -49,17 +48,6 @@ export interface JobRun<T> {
   error: string | null;
 }
 
-export function getApiToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return window.sessionStorage.getItem(API_TOKEN_KEY);
-}
-
-export function setApiToken(token: string | null): void {
-  if (typeof window === "undefined") return;
-  if (token) window.sessionStorage.setItem(API_TOKEN_KEY, token);
-  else window.sessionStorage.removeItem(API_TOKEN_KEY);
-}
-
 export function listActiveJobs(): ActiveJob[] {
   if (typeof window === "undefined") return [];
   try {
@@ -105,8 +93,6 @@ export async function apiRequest<T>(
     Accept: "application/json",
     ...options.headers,
   };
-  const token = getApiToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
 
   const controller = new AbortController();
@@ -143,9 +129,6 @@ export async function apiRequest<T>(
     envelope = null;
   }
   if (!response.ok || !envelope?.success) {
-    if (response.status === 401 && typeof window !== "undefined") {
-      window.dispatchEvent(new Event("stockwise:unauthorized"));
-    }
     const message = envelope?.error ??
       `服務暫時無法回應（HTTP ${response.status}），請稍後重試`;
     throw new ApiError(message, response.status, parseRetryAfter(response));

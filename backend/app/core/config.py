@@ -33,7 +33,6 @@ class Settings(BaseSettings):
     # --- optional ---
     openrouter_api_key: str = ""
     job_token: str = ""
-    api_token: str = ""
     alert_webhook_url: str = ""
 
     # --- infrastructure ---
@@ -46,18 +45,10 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_environment_security(self) -> "Settings":
-        self.api_token = self.api_token.strip()
         self.job_token = self.job_token.strip()
         self.cors_origins = ",".join(self.cors_origin_list)
         if self.environment == "production":
-            missing = [
-                name
-                for name, value in (
-                    ("API_TOKEN", self.api_token),
-                    ("JOB_TOKEN", self.job_token),
-                )
-                if not value
-            ]
+            missing = ["JOB_TOKEN"] if not self.job_token else []
             if missing:
                 raise ValueError(
                     f"production requires non-empty {', '.join(missing)}"

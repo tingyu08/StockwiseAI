@@ -11,7 +11,6 @@ def _secrets(settings: Settings) -> tuple[str, ...]:
         settings.gemini_api_key,
         settings.finmind_token,
         settings.openrouter_api_key,
-        settings.api_token,
         settings.job_token,
         settings.alert_webhook_url,
     )

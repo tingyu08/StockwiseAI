@@ -4,7 +4,6 @@ import { Suspense } from "react";
 import "./globals.css";
 
 import { MarketSwitch } from "@/components/market-switch";
-import { ApiTokenControl } from "@/components/api-token-control";
 import { JobCenter } from "@/components/job-center";
 import { Providers } from "@/components/providers";
 
@@ -36,7 +35,6 @@ export default function RootLayout({
             </div>
             <div className="flex items-center gap-2">
               <JobCenter />
-              <ApiTokenControl />
               <Suspense>
                 <MarketSwitch />
               </Suspense>

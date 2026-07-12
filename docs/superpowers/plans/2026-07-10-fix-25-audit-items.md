@@ -184,7 +184,7 @@
 **Interfaces:**
 - Produces: production fail-closed config、security headers、reproducible dependency install、non-root/standalone images、CI gate。
 
-- [x] 新增測試：production 缺 API_TOKEN/JOB_TOKEN 時 Settings 驗證失敗，development 可空白。
+- [x] 新增測試：production 缺 JOB_TOKEN 時 Settings 驗證失敗，development 可空白；瀏覽器 API Token 功能後續依需求移除。
 - [x] 實作 environment mode、trimmed CORS、security headers、request correlation id 與敏感資訊遮罩。
 - [x] 產生並驗證 Python lock，Docker 使用 locked install。
 - [x] Next standalone build、non-root runtime、production dependency-only image。

@@ -1,7 +1,7 @@
 "use client";
 
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 
 export function Providers({ children }: { children: React.ReactNode }) {
   const [queryClient] = useState(
@@ -12,10 +12,5 @@ export function Providers({ children }: { children: React.ReactNode }) {
         },
       }),
   );
-  useEffect(() => {
-    const reset = () => queryClient.resetQueries();
-    window.addEventListener("stockwise:token-changed", reset);
-    return () => window.removeEventListener("stockwise:token-changed", reset);
-  }, [queryClient]);
   return <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>;
 }

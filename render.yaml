@@ -18,7 +18,7 @@ services:
       - key: SCHEDULER_MODE
         value: external          # 排程一律由 GitHub Actions cron 觸發
       - key: ENVIRONMENT
-        value: production        # 缺 API_TOKEN/JOB_TOKEN 時拒絕啟動
+        value: production        # 缺 JOB_TOKEN 時拒絕啟動
       - key: DATABASE_URL
         sync: false              # Neon 連線字串，於 dashboard 填入
       - key: GEMINI_API_KEY
@@ -27,8 +27,6 @@ services:
         sync: false
       - key: JOB_TOKEN
         generateValue: true      # Render 自動產生；複製到 GitHub secrets
-      - key: API_TOKEN
-        generateValue: true      # 複製此值，從前端右上角 API Token 輸入
       - key: ALERT_WEBHOOK_URL
         sync: false              # 選配：Slack/Discord/自建 webhook
       - key: CORS_ORIGINS

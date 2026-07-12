@@ -217,8 +217,8 @@ watchlists       自選股清單
 ### Phase 0：專案骨架（~2 天）
 - [x] Monorepo 結構：`frontend/`（Next.js）＋ `backend/`（FastAPI）
 - [x] SQLite/PostgreSQL schema + SQLAlchemy + Alembic migration
-- [x] 統一 API 回應格式、錯誤處理與 Bearer Token 保護
-- [x] 環境變數管理（`GEMINI_API_KEY`、`FINMIND_TOKEN`、`API_TOKEN` 等）
+- [x] 統一 API 回應格式與錯誤處理；排程入口使用獨立 Job Token
+- [x] 環境變數管理（`GEMINI_API_KEY`、`FINMIND_TOKEN`、`JOB_TOKEN` 等）
 - [x] `MarketDataProvider`、`MarketDataGateway` 與 `AIProvider` 抽象
 
 ### Phase 1：行情資料與走勢呈現（~1.5 週）→ 功能 A、A2

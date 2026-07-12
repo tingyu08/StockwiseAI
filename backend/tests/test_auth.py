@@ -11,52 +11,39 @@ def _reset_settings_cache():
     get_settings.cache_clear()
 
 
-def test_private_api_rejects_missing_bearer_token(client, monkeypatch):
+def test_browser_api_does_not_require_bearer_token(client, monkeypatch):
     monkeypatch.setenv("API_TOKEN", "single-user-secret")
     get_settings.cache_clear()
 
     response = client.get("/api/v1/usage")
 
-    assert response.status_code == 401
-    assert response.json() == {
-        "success": False,
-        "data": None,
-        "error": "需要有效的 API Token",
-        "meta": None,
-    }
-
-
-def test_private_api_accepts_valid_bearer_token(client, monkeypatch):
-    monkeypatch.setenv("API_TOKEN", "single-user-secret")
-    get_settings.cache_clear()
-
-    response = client.get(
-        "/api/v1/usage",
-        headers={"Authorization": "Bearer single-user-secret"},
-    )
-
     assert response.status_code == 200
 
 
-def test_health_remains_public_when_api_token_is_configured(client, monkeypatch):
-    monkeypatch.setenv("API_TOKEN", "single-user-secret")
-    get_settings.cache_clear()
-
+def test_health_is_public(client):
     response = client.get("/api/v1/health")
 
     assert response.status_code == 200
 
 
-def test_production_requires_api_and_job_tokens():
+def test_production_requires_job_token():
     with pytest.raises(ValidationError):
         Settings(
             _env_file=None,
             environment="production",
             gemini_api_key="gemini",
             finmind_token="finmind",
-            api_token="",
             job_token="",
         )
+
+    settings = Settings(
+        _env_file=None,
+        environment="production",
+        gemini_api_key="gemini",
+        finmind_token="finmind",
+        job_token="scheduler-secret",
+    )
+    assert settings.job_token == "scheduler-secret"
 
 
 def test_development_allows_empty_private_tokens():
@@ -65,7 +52,6 @@ def test_development_allows_empty_private_tokens():
         environment="development",
         gemini_api_key="gemini",
         finmind_token="finmind",
-        api_token="",
         job_token="",
         cors_origins=" http://localhost:3000, http://localhost:3001 ",
     )
@@ -91,12 +77,11 @@ def test_sensitive_configuration_values_are_redacted_from_logs():
         _env_file=None,
         gemini_api_key="gemini-private-key",
         finmind_token="finmind-private-token",
-        api_token="api-private-token",
         job_token="job-private-token",
     )
 
     message = redact_sensitive(
-        "keys: gemini-private-key api-private-token", settings
+        "keys: gemini-private-key job-private-token", settings
     )
     assert message == "keys: [REDACTED] [REDACTED]"
 
@@ -104,7 +89,6 @@ def test_sensitive_configuration_values_are_redacted_from_logs():
 def test_job_token_can_poll_job_status(client, monkeypatch):
     from app.services.job_service import enqueue_job
 
-    monkeypatch.setenv("API_TOKEN", "single-user-secret")
     monkeypatch.setenv("JOB_TOKEN", "scheduler-secret")
     get_settings.cache_clear()
     run_id = enqueue_job("auth-poll", payload={"name": "sync-tw"})

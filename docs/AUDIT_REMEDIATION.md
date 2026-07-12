@@ -25,13 +25,13 @@
 21. 前端工作中心持久化 active run id，可恢復輪詢、顯示階段、移除或重試失敗工作。
 22. Prediction 唯一約束、熱門查詢索引與持倉固定三次批次 query，消除 N+1。
 23. liveness/readiness 分離，data-status 分列 AI kind，並定期清理過期 operational history。
-24. production fail-closed、安全標頭/request ID/secret redaction、hash lock、non-root standalone images 與 CI gate。
+24. production 排程憑證 fail-closed、安全標頭/request ID/secret redaction、hash lock、non-root standalone images 與 CI gate。
 25. 每日簡報與模擬交易分析優先使用 Gemini 3.5 Flash，額度或上游失敗時才走降級鏈。
 
 ## 驗證證據
 
-- Backend：128 tests，總 statement coverage 78%，coverage gate 75%，Ruff 通過。
-- Frontend：13 tests；實測 statements 79%、branches 74%、functions 70%、lines 85%，coverage gate 分別為 75%/70%/70%/80%，ESLint 與 standalone production build 通過。
+- Backend：127 tests，總 statement coverage 78%，coverage gate 75%，Ruff 通過。
+- Frontend：12 tests；實測 statements 77%、branches 72%、functions 70%、lines 83%，coverage gate 分別為 75%/70%/70%/80%，ESLint 與 standalone production build 通過。
 - SQLite Alembic：完整 upgrade head、downgrade base 通過。
 - Supply chain：`pip-audit` 與 `npm audit --audit-level=high` 均為 0 known vulnerabilities。
 

@@ -12,7 +12,6 @@ from app.api.v1 import (
     simulation, stocks, usage, watchlist,
 )
 from app.core.config import get_settings
-from app.core.auth import require_api_token
 from app.core.exceptions import register_exception_handlers
 from app.core.logging_config import configure_sensitive_logging
 
@@ -59,7 +58,6 @@ def create_app() -> FastAPI:
     configure_sensitive_logging(settings)
     app = FastAPI(title="stock-ai-advisor", version="0.1.0", lifespan=lifespan)
 
-    app.middleware("http")(require_api_token)
     app.middleware("http")(add_security_headers)
 
     app.add_middleware(

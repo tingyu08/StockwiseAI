@@ -45,11 +45,10 @@ cd ../frontend && npm run test:coverage && npm run lint && npm run build
 
 ## 安全與通知
 
-- 公開部署時請設定 `API_TOKEN`。除 `/health` 與帶 `X-Job-Token` 的排程觸發外，API 會要求 `Authorization: Bearer <token>`。
-- 前端右上角的「API Token」按鈕只將 token 保存在當次瀏覽器 session。
+- 網站 API 不需要登入或瀏覽器 Token；公開部署時，任何知道網址的人都能操作自選、警示、AI 與模擬交易功能。
 - 設定 `ALERT_WEBHOOK_URL` 後，價格與 ETF 折溢價警示會以 JSON webhook 送出。
 - 外部排程會寫入 `job_runs`，可查詢 queued/running/succeeded/failed 狀態並重試失敗工作。
-- production 必須設定 `ENVIRONMENT=production`、`API_TOKEN`、`JOB_TOKEN`；缺少任一 token 會拒絕啟動。
+- production 必須設定 `ENVIRONMENT=production` 與 `JOB_TOKEN`；後者只保護 GitHub Actions 排程入口。
 - `/health/live` 只檢查程序，`/health/ready` 會實際檢查 DB；Render health check 使用後者。
 - 長任務會顯示在頁首「工作」中心；換頁後可恢復追蹤，失敗工作可直接重試。
 

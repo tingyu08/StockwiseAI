@@ -122,8 +122,7 @@ backend/
 | GET | `/api/v1/jobs/runs/{id}` | 查詢 queued/running/succeeded/failed 與結果 |
 | POST | `/api/v1/jobs/runs/{id}:retry` | 重試失敗工作 |
 
-設定 `API_TOKEN` 後，除 `/health` 與排程觸發端點外，所有 API 皆需
-`Authorization: Bearer <API_TOKEN>`。排程觸發仍獨立使用 `X-Job-Token`。
+一般網站 API 不需要瀏覽器 Token。排程觸發端點獨立使用 `X-Job-Token`，避免外部任意啟動完整每日工作序列。
 
 長任務不在 request process 內執行：API 建立 `job_runs` 後立即回傳 `run_id`，worker 以
 lease/heartbeat claim 工作；程序中斷後會重新排隊。active idempotency partial index 防止同一工作
@@ -212,7 +211,7 @@ pending 供下次重送。Prediction identity 由 `(stock_id, trade_date, horizo
 - `GET /health/live`：程序存活；`GET /health/ready`：執行 `SELECT 1` 驗證 DB。
 - `/data-status` 分開行情、NAV、news/routine/trade 日期與最近成功工作。
 - retention：成功 JobRun 30 天、失敗 JobRun 90 天、AI usage 90 天；queued/running 不清除。
-- production 缺 `API_TOKEN` 或 `JOB_TOKEN` 直接拒絕啟動；CORS 不允許 `*`。
+- production 缺 `JOB_TOKEN` 直接拒絕啟動；CORS 不允許 `*`。一般網站 API 是公開介面。
 - API 回應加入 request ID、CSP、nosniff、frame deny、referrer/permissions policy；日誌 filter 遮蔽 secrets。
 - Python runtime 由 hash lock 安裝；前後端 runtime container 都使用 non-root user，Next 採 standalone output。
 
@@ -322,7 +321,6 @@ OPENROUTER_API_KEY=        # 選配（最後備援）
 DATABASE_URL=sqlite:///data/app.db   # 雲端改 postgres://...
 SCHEDULER_MODE=internal    # internal | external
 JOB_TOKEN=                 # 雲端排程觸發用（隨機長字串）
-API_TOKEN=                 # 公開部署必填；私人 API Bearer Token
 ALERT_WEBHOOK_URL=         # 選配；警示觸發 webhook
 CORS_ORIGINS=http://localhost:3000
 ```
@@ -334,6 +332,6 @@ CORS_ORIGINS=http://localhost:3000
 |----|------|------|
 | 單元 | pytest | 指標、回測、交易日曆、配額、撮合與風控 |
 | 整合 | pytest + TestClient + 測試 DB | API envelope、認證、市場隔離、工作狀態與 migration |
-| 前端 | Vitest + Testing Library | API Token、資料狀態與圖表元件 |
+| 前端 | Vitest + Testing Library | API client、背景工作、資料狀態與圖表元件 |
 | 建置 | ESLint + Next production build | TypeScript、SSR/SSG 與 bundle 驗證 |
 | AI 品質 | 離線評測腳本 | 固定輸入集跑各模型，人工評分報告合理性（prompt 迭代用） |

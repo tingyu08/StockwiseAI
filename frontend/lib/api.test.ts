@@ -15,11 +15,11 @@ afterEach(() => {
 });
 
 describe("API client", () => {
-  it("adds the session bearer token to requests", async () => {
+  it("does not attach a browser-managed bearer token", async () => {
     const fetchMock = vi.fn().mockResolvedValue(okResponse({ status: "ok" }));
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("window", {
-      sessionStorage: { getItem: () => "single-user-secret" },
+      sessionStorage: { getItem: () => "legacy-browser-token" },
     });
 
     await api.apiGet("/usage");
@@ -27,9 +27,7 @@ describe("API client", () => {
     expect(fetchMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        headers: expect.objectContaining({
-          Authorization: "Bearer single-user-secret",
-        }),
+        headers: expect.not.objectContaining({ Authorization: expect.anything() }),
       }),
     );
   });
@@ -98,7 +96,7 @@ describe("API client", () => {
     });
   });
 
-  it("notifies the UI when the API token is unauthorized", async () => {
+  it("does not open a removed token UI on unauthorized responses", async () => {
     const dispatchEvent = vi.fn();
     vi.stubGlobal("window", {
       sessionStorage: { getItem: () => null },
@@ -113,16 +111,14 @@ describe("API client", () => {
         json: async () => ({
           success: false,
           data: null,
-          error: "需要有效的 API Token",
+          error: "未授權",
           meta: null,
         }),
       }),
     );
 
     await expect(api.apiGet("/usage")).rejects.toMatchObject({ status: 401 });
-    expect(dispatchEvent).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "stockwise:unauthorized" }),
-    );
+    expect(dispatchEvent).not.toHaveBeenCalled();
   });
 
   it("does not start polling when the job signal is already aborted", async () => {
