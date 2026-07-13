@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     # --- infrastructure ---
     environment: Literal["development", "test", "production"] = "development"
     database_url: str = f"sqlite:///{BASE_DIR / 'data' / 'app.db'}"
+    database_pool_size: int = Field(default=5, ge=1, le=20)
+    database_max_overflow: int = Field(default=5, ge=0, le=20)
+    database_pool_timeout: int = Field(default=10, ge=1, le=60)
     scheduler_mode: str = Field(default="internal", pattern="^(internal|external)$")
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
 

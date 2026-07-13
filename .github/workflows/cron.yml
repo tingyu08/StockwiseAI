@@ -56,7 +56,7 @@ jobs:
         env:
           JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
         run: |
-          for job in news-tw sync-tw sim-fill-tw nav-tw alerts-tw ai-batch-tw sim-decide-tw; do
+          for job in news-tw sync-tw sim-fill-tw nav-tw alerts-tw ai-batch-tw overview-tw sim-decide-tw; do
             echo "== $job =="
             bash .github/scripts/run-job.sh "$job"
           done
@@ -66,7 +66,7 @@ jobs:
         env:
           JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
         run: |
-          for job in news-us sync-us sim-fill-us nav-us alerts-us ai-batch-us sim-decide-us; do
+          for job in news-us sync-us sim-fill-us nav-us alerts-us ai-batch-us overview-us sim-decide-us; do
             echo "== $job =="
             bash .github/scripts/run-job.sh "$job"
           done

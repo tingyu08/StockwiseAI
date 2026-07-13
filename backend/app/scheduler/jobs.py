@@ -60,6 +60,18 @@ async def ai_batch_daily(market: str) -> dict:
         db.close()  # Neon 紀律：job 結束即釋放連線
 
 
+async def overview_daily(market: str) -> dict:
+    """Generate the cached four-module daily investment briefing."""
+    from app.services.analysis_service import overview_dto, run_overview
+
+    db = SessionLocal()
+    try:
+        overview = await run_overview(db, market)
+        return overview_dto(overview)
+    finally:
+        db.close()
+
+
 async def news_research_daily(market: str) -> dict:
     """AI 託管清單的每日新聞研究（Antigravity），於例行批次分析前執行。
 
@@ -167,6 +179,8 @@ JOBS = {
     "news-us": lambda: news_research_daily("US"),
     "ai-batch-tw": lambda: ai_batch_daily("TW"),
     "ai-batch-us": lambda: ai_batch_daily("US"),
+    "overview-tw": lambda: overview_daily("TW"),
+    "overview-us": lambda: overview_daily("US"),
     "nav-tw": lambda: nav_snapshot_daily("TW"),
     "nav-us": lambda: nav_snapshot_daily("US"),
     "sim-decide-tw": lambda: sim_decide_daily("TW"),
@@ -189,6 +203,7 @@ def start_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(nav_snapshot_daily, CronTrigger(hour=14, minute=45, timezone=TZ), args=["TW"])
     scheduler.add_job(alert_check_daily, CronTrigger(hour=14, minute=50, timezone=TZ), args=["TW"])
     scheduler.add_job(ai_batch_daily, CronTrigger(hour=15, minute=0, timezone=TZ), args=["TW"])
+    scheduler.add_job(overview_daily, CronTrigger(hour=15, minute=10, timezone=TZ), args=["TW"])
     scheduler.add_job(sim_decide_daily, CronTrigger(hour=15, minute=15, timezone=TZ), args=["TW"])
     # 美股（台灣時間清晨）：同樣序列，新聞研究 04:40 先跑
     scheduler.add_job(news_research_daily, CronTrigger(hour=4, minute=40, timezone=TZ), args=["US"])
@@ -197,6 +212,7 @@ def start_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(nav_snapshot_daily, CronTrigger(hour=5, minute=45, timezone=TZ), args=["US"])
     scheduler.add_job(alert_check_daily, CronTrigger(hour=5, minute=50, timezone=TZ), args=["US"])
     scheduler.add_job(ai_batch_daily, CronTrigger(hour=6, minute=0, timezone=TZ), args=["US"])
+    scheduler.add_job(overview_daily, CronTrigger(hour=6, minute=10, timezone=TZ), args=["US"])
     scheduler.add_job(sim_decide_daily, CronTrigger(hour=6, minute=15, timezone=TZ), args=["US"])
     scheduler.add_job(maintenance_daily, CronTrigger(hour=3, minute=15, timezone=TZ))
     scheduler.start()

@@ -28,7 +28,14 @@ def _build_engine():
     url = _normalize_url(settings.database_url)
     if url.startswith("sqlite"):
         return create_engine(url, connect_args={"check_same_thread": False})
-    return create_engine(url, pool_pre_ping=True, pool_recycle=300, pool_size=2, max_overflow=3)
+    return create_engine(
+        url,
+        pool_pre_ping=True,
+        pool_recycle=300,
+        pool_size=settings.database_pool_size,
+        max_overflow=settings.database_max_overflow,
+        pool_timeout=settings.database_pool_timeout,
+    )
 
 
 engine = _build_engine()
