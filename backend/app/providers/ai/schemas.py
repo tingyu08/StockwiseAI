@@ -44,7 +44,7 @@ class AnalysisReport(BaseModel):
     def prices_are_ordered(self):
         if self.target_price_low > self.target_price_high:
             raise ValueError("target_price_low must not exceed target_price_high")
-        if self.stop_loss >= self.target_price_low:
+        if self.action == "buy" and self.stop_loss >= self.target_price_low:
             raise ValueError("stop_loss must be below target_price_low")
         return self
 

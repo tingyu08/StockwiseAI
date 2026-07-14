@@ -146,7 +146,7 @@ watchlists       自選股清單
 預估每日用量 vs 額度：
 | 任務 | 模型 | 請求數/日 | 額度 | 餘裕 |
 |------|------|-----------|------|------|
-| 例行批次分析（30 檔，批次化） | 3.1 Flash Lite | ~4 | 500 RPD | 125 倍 |
+| 例行批次分析（30 檔，批次化） | 3.1 Flash Lite | ~8 | 500 RPD | 62 倍 |
 | 模擬交易批次＋每日簡報總結 | 3.5 Flash（可降級） | ~5 | 20 RPD | 約 4 倍 |
 | 單檔深度分析（個股頁觸發，含快取） | 3.5 Flash | ~5–10 | 20 RPD | 2~4 倍 |
 | 新聞/事件研究 | Antigravity | ~10–30 | 100 RPD（獨立額度） | 3~10 倍 |
@@ -164,7 +164,8 @@ watchlists       自選股清單
 2. **Prompt 設計**：
    - System prompt 定義角色（量化分析師）、輸出 JSON schema、免責立場
    - Prompt 版本化（`prompt_version` 存 DB），方便迭代比較品質
-   - Gemini 使用原生 `response_schema` 強制 JSON，落地前一律通過 Pydantic；第一次驗證失敗時，連同原始輸出與錯誤要求模型修正一次
+   - Gemini 使用原生 `response_schema` 強制 JSON；批次回應逐檔通過 Pydantic，僅將失敗股票連同原始輸出與錯誤修正一次，仍失敗則記錄 symbol 並跳過，不拖垮其他有效報告
+   - `target_price_low <= target_price_high` 適用所有 action；`stop_loss < target_price_low` 僅在 `action=buy` 時強制，與模擬交易只採用建倉報告停損的行為一致
 3. **結構化輸出 schema**：
    ```json
    {
