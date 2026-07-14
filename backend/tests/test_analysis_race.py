@@ -256,6 +256,28 @@ async def test_trade_batch_uses_premium_router(monkeypatch):
         db.close()
 
 
+async def test_run_batch_limits_each_ai_request_to_four_stocks(monkeypatch):
+    db = SessionLocal()
+    try:
+        stocks = [_seed_stock(db, str(9010 + index)) for index in range(5)]
+        batch_sizes = []
+
+        async def fake_analyze_batch(_db, contexts):
+            batch_sizes.append(len(contexts))
+            return BatchAnalysisResult(
+                reports=[_report(context.symbol) for context in contexts]
+            ), "fake"
+
+        monkeypatch.setattr("app.providers.ai.router.analyze_batch", fake_analyze_batch)
+
+        result = await analysis_service.run_batch(db, stocks, kind="routine")
+
+        assert result["analyzed"] == 5
+        assert batch_sizes == [4, 1]
+    finally:
+        db.close()
+
+
 async def test_run_batch_rebuilds_when_input_context_changes(monkeypatch):
     db = SessionLocal()
     try:

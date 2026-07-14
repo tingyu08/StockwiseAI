@@ -41,6 +41,8 @@ class Settings(BaseSettings):
     database_pool_size: int = Field(default=5, ge=1, le=20)
     database_max_overflow: int = Field(default=5, ge=0, le=20)
     database_pool_timeout: int = Field(default=10, ge=1, le=60)
+    gemini_read_timeout_seconds: int = Field(default=300, ge=30, le=600)
+    gemini_max_retries: int = Field(default=2, ge=0, le=5)
     scheduler_mode: str = Field(default="internal", pattern="^(internal|external)$")
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
 

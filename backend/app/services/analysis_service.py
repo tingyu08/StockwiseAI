@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 # 同市場的總評一次只允許一個請求重跑，避免連按時重複扣 AI 額度
 _overview_locks: dict[str, asyncio.Lock] = {}
+AI_ANALYSIS_BATCH_SIZE = 4
 
 
 def latest_report(db: Session, stock: Stock, kinds: tuple[str, ...] = ("deep", "routine")) -> AiReport | None:
@@ -118,8 +119,8 @@ async def run_batch(db: Session, stocks: Sequence[Stock], kind: str = "routine")
 
     analyzed = 0
     model_used = None
-    for i in range(0, len(pending), 8):
-        batch = pending[i : i + 8]
+    for i in range(0, len(pending), AI_ANALYSIS_BATCH_SIZE):
+        batch = pending[i : i + AI_ANALYSIS_BATCH_SIZE]
         contexts = [item[1] for item in batch]
         analyze = (
             ai_router.analyze_trading_batch if kind == "trade" else ai_router.analyze_batch

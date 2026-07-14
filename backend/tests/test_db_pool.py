@@ -1,6 +1,7 @@
 from types import SimpleNamespace
 
 from app.core import db as db_module
+from app.core.config import Settings
 
 
 def test_postgres_pool_has_capacity_for_worker_heartbeat_and_dashboard(monkeypatch):
@@ -22,3 +23,14 @@ def test_postgres_pool_has_capacity_for_worker_heartbeat_and_dashboard(monkeypat
         assert engine.pool._timeout == 10
     finally:
         engine.dispose()
+
+
+def test_gemini_resilience_settings_defaults():
+    settings = Settings(
+        _env_file=None,
+        gemini_api_key="test-key",
+        finmind_token="test-token",
+    )
+
+    assert settings.gemini_read_timeout_seconds == 300
+    assert settings.gemini_max_retries == 2

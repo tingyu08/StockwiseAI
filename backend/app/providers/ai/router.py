@@ -31,7 +31,13 @@ async def analyze_batch(db: Session, contexts: list[AnalysisContext]) -> tuple[B
             result = await provider.analyze_batch(contexts)
             return result, model
         except (QuotaExceededError, UpstreamError) as exc:
-            logger.warning("批次分析 %s 失敗，降級下一層：%s", model, exc.message)
+            logger.warning(
+                "AI provider failed model=%s operation=batch error_type=%s error=%s; "
+                "falling back to next model",
+                model,
+                type(exc).__name__,
+                exc.message,
+            )
             last_error = exc
     raise UpstreamError("所有例行分析模型皆不可用") from last_error
 
@@ -52,7 +58,13 @@ async def analyze_trading_batch(
             result = await provider.analyze_batch(contexts)
             return result, model
         except (QuotaExceededError, UpstreamError) as exc:
-            logger.warning("交易分析模型 %s 失敗，嘗試下一個：%s", model, exc.message)
+            logger.warning(
+                "AI provider failed model=%s operation=trading_batch error_type=%s "
+                "error=%s; falling back to next model",
+                model,
+                type(exc).__name__,
+                exc.message,
+            )
             last_error = exc
     raise UpstreamError("所有交易分析模型皆不可用") from last_error
 
@@ -65,7 +77,13 @@ async def generate_structured(db: Session, prompt: str, output_model):
             provider = GeminiProvider(model, db, use_schema=use_schema)
             return await provider.generate(prompt, output_model), model
         except (QuotaExceededError, UpstreamError) as exc:
-            logger.warning("結構化生成 %s 失敗，降級下一層：%s", model, exc.message)
+            logger.warning(
+                "AI provider failed model=%s operation=structured error_type=%s error=%s; "
+                "falling back to next model",
+                model,
+                type(exc).__name__,
+                exc.message,
+            )
             last_error = exc
     raise UpstreamError("所有模型皆不可用") from last_error
 
@@ -78,6 +96,12 @@ async def generate_premium_structured(db: Session, prompt: str, output_model):
             provider = GeminiProvider(model, db, use_schema=use_schema)
             return await provider.generate(prompt, output_model), model
         except (QuotaExceededError, UpstreamError) as exc:
-            logger.warning("重要摘要模型 %s 失敗，嘗試下一個：%s", model, exc.message)
+            logger.warning(
+                "AI provider failed model=%s operation=premium_structured error_type=%s "
+                "error=%s; falling back to next model",
+                model,
+                type(exc).__name__,
+                exc.message,
+            )
             last_error = exc
     raise UpstreamError("所有摘要模型皆不可用") from last_error

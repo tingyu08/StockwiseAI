@@ -5,9 +5,12 @@
 - 所有輸出過 Pydantic 驗證，失敗重試一次
 - 每次呼叫寫入 ai_usage_log（額度計數的資料來源）
 """
+import asyncio
 import json
 import logging
+import random
 from html import escape
+from time import monotonic
 from typing import TypeVar
 
 import httpx
@@ -24,6 +27,12 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 PROMPT_VERSION = "v2"
+_sleep = asyncio.sleep
+
+
+def _retry_delay(retry_index: int) -> float:
+    """Return 1s, 2s, ... exponential backoff with up to 250ms jitter."""
+    return (2**retry_index) + random.uniform(0, 0.25)
 
 SYSTEM_PROMPT = """你是一位嚴謹的量化股票分析師。根據提供的技術面、籌碼面與新聞面資料產出分析。
 規則：
@@ -108,9 +117,6 @@ class GeminiProvider(AIProvider):
 
     async def _call_api(self, prompt: str, output_model: type[BaseModel]) -> str:
         settings = get_settings()
-        reservation_id = reserve_quota(
-            self.db, self.model_name, estimated_tokens=max(1, len(prompt))
-        )
         generation_config: dict = {"responseMimeType": "application/json"}
         if self.use_schema:
             generation_config["responseSchema"] = _to_gemini_schema(
@@ -135,30 +141,124 @@ class GeminiProvider(AIProvider):
                 SYSTEM_PROMPT + "\n\n" + full_prompt
             )
 
-        try:
-            async with httpx.AsyncClient(timeout=120) as client:
-                res = await client.post(
-                    f"{BASE_URL}/{self.model_name}:generateContent",
-                    params={"key": settings.gemini_api_key},
-                    json=body,
+        max_attempts = settings.gemini_max_retries + 1
+        timeout = httpx.Timeout(
+            connect=10.0,
+            read=float(settings.gemini_read_timeout_seconds),
+            write=30.0,
+            pool=10.0,
+        )
+        for attempt_index in range(max_attempts):
+            attempt = attempt_index + 1
+            reservation_id = reserve_quota(
+                self.db, self.model_name, estimated_tokens=max(1, len(full_prompt))
+            )
+            started = monotonic()
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    res = await client.post(
+                        f"{BASE_URL}/{self.model_name}:generateContent",
+                        params={"key": settings.gemini_api_key},
+                        json=body,
+                    )
+            except httpx.TimeoutException as exc:
+                elapsed_ms = round((monotonic() - started) * 1000)
+                finalize_quota(self.db, reservation_id, provider=self.provider_name)
+                logger.warning(
+                    "Gemini request model=%s attempt=%d/%d prompt_chars=%d "
+                    "elapsed_ms=%d status=timeout error_type=%s",
+                    self.model_name,
+                    attempt,
+                    max_attempts,
+                    len(full_prompt),
+                    elapsed_ms,
+                    type(exc).__name__,
                 )
-        except httpx.TimeoutException as exc:
-            finalize_quota(
-                self.db, reservation_id, provider=self.provider_name
+                if attempt < max_attempts:
+                    delay = _retry_delay(attempt_index)
+                    logger.warning(
+                        "Gemini retry model=%s next_attempt=%d/%d retry_in_seconds=%.3f",
+                        self.model_name,
+                        attempt + 1,
+                        max_attempts,
+                        delay,
+                    )
+                    await _sleep(delay)
+                    continue
+                raise UpstreamError(
+                    f"{self.model_name} request timed out after {max_attempts} attempts"
+                ) from exc
+            except httpx.HTTPError as exc:
+                elapsed_ms = round((monotonic() - started) * 1000)
+                finalize_quota(self.db, reservation_id, provider=self.provider_name)
+                logger.warning(
+                    "Gemini request model=%s attempt=%d/%d prompt_chars=%d "
+                    "elapsed_ms=%d status=transport_error error_type=%s",
+                    self.model_name,
+                    attempt,
+                    max_attempts,
+                    len(full_prompt),
+                    elapsed_ms,
+                    type(exc).__name__,
+                )
+                raise UpstreamError(f"{self.model_name} API connection failed") from exc
+
+            elapsed_ms = round((monotonic() - started) * 1000)
+            logger.info(
+                "Gemini request model=%s attempt=%d/%d prompt_chars=%d "
+                "elapsed_ms=%d status=%d",
+                self.model_name,
+                attempt,
+                max_attempts,
+                len(full_prompt),
+                elapsed_ms,
+                res.status_code,
             )
-            raise UpstreamError(f"{self.model_name} API 連線逾時") from exc
-        except httpx.HTTPError as exc:
-            finalize_quota(
-                self.db, reservation_id, provider=self.provider_name
-            )
-            raise UpstreamError(f"{self.model_name} API 連線失敗") from exc
-        if res.status_code == 429:
-            finalize_quota(self.db, reservation_id, provider=self.provider_name)
-            raise UpstreamError(f"{self.model_name} 被 Google 端限流（429）")
-        if res.status_code != 200:
-            finalize_quota(self.db, reservation_id, provider=self.provider_name)
-            logger.error("Gemini API %s: %s", res.status_code, res.text[:500])
-            raise UpstreamError(f"{self.model_name} API 錯誤（{res.status_code}）")
+            if res.status_code == 503:
+                finalize_quota(self.db, reservation_id, provider=self.provider_name)
+                logger.warning(
+                    "Gemini transient failure model=%s attempt=%d/%d prompt_chars=%d "
+                    "elapsed_ms=%d status=503",
+                    self.model_name,
+                    attempt,
+                    max_attempts,
+                    len(full_prompt),
+                    elapsed_ms,
+                )
+                if attempt < max_attempts:
+                    delay = _retry_delay(attempt_index)
+                    logger.warning(
+                        "Gemini retry model=%s next_attempt=%d/%d retry_in_seconds=%.3f",
+                        self.model_name,
+                        attempt + 1,
+                        max_attempts,
+                        delay,
+                    )
+                    await _sleep(delay)
+                    continue
+                raise UpstreamError(
+                    f"{self.model_name} returned 503 after {max_attempts} attempts"
+                )
+            if res.status_code == 429:
+                finalize_quota(self.db, reservation_id, provider=self.provider_name)
+                raise UpstreamError(f"{self.model_name} was rate limited by Google (429)")
+            if res.status_code != 200:
+                finalize_quota(self.db, reservation_id, provider=self.provider_name)
+                logger.error(
+                    "Gemini request model=%s attempt=%d/%d prompt_chars=%d "
+                    "elapsed_ms=%d status=%d response=%s",
+                    self.model_name,
+                    attempt,
+                    max_attempts,
+                    len(full_prompt),
+                    elapsed_ms,
+                    res.status_code,
+                    res.text[:500],
+                )
+                raise UpstreamError(
+                    f"{self.model_name} API returned HTTP {res.status_code}"
+                )
+            break
 
         try:
             data = res.json()

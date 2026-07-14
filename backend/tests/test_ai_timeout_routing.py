@@ -4,14 +4,37 @@ from sqlalchemy import delete, func, select
 
 from app.core.db import SessionLocal
 from app.core.exceptions import UpstreamError
-from app.providers.ai import antigravity, router
+from app.providers.ai import antigravity, gemini, router
 from app.providers.ai.antigravity import AntigravityProvider
 from app.providers.ai.gemini import GeminiProvider
 from app.providers.ai.schemas import AnalysisReport
 from app.models.analysis import AiQuotaReservation, AiUsageLog
 
 
+@pytest.fixture(autouse=True)
+def _isolate_ai_usage():
+    models = [
+        "gemini-3.1-flash-lite",
+        "gemini-3.5-flash",
+        "gemma-4-31b-it",
+        antigravity.AGENT_ID,
+    ]
+    db = SessionLocal()
+    db.execute(delete(AiUsageLog).where(AiUsageLog.model.in_(models)))
+    db.execute(delete(AiQuotaReservation).where(AiQuotaReservation.model.in_(models)))
+    db.commit()
+    db.close()
+    yield
+    db = SessionLocal()
+    db.execute(delete(AiUsageLog).where(AiUsageLog.model.in_(models)))
+    db.execute(delete(AiQuotaReservation).where(AiQuotaReservation.model.in_(models)))
+    db.commit()
+    db.close()
+
+
 async def test_gemini_read_timeout_becomes_fallback_eligible(monkeypatch):
+    timeouts = []
+
     class TimeoutClient:
         async def __aenter__(self):
             return self
@@ -22,14 +45,128 @@ async def test_gemini_read_timeout_becomes_fallback_eligible(monkeypatch):
         async def post(self, *args, **kwargs):
             raise httpx.ReadTimeout("upstream stalled")
 
-    monkeypatch.setattr("app.providers.ai.gemini.httpx.AsyncClient", lambda **kw: TimeoutClient())
+    def client_factory(**kwargs):
+        timeouts.append(kwargs["timeout"])
+        return TimeoutClient()
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr("app.providers.ai.gemini.httpx.AsyncClient", client_factory)
+    monkeypatch.setattr(gemini, "_sleep", no_sleep, raising=False)
+    monkeypatch.setattr(gemini, "_retry_delay", lambda _retry: 0, raising=False)
     db = SessionLocal()
     try:
         provider = GeminiProvider("gemini-3.5-flash", db)
-        with pytest.raises(UpstreamError, match="逾時"):
+        with pytest.raises(UpstreamError, match="timed out after 3 attempts"):
             await provider._call_api("prompt", AnalysisReport)
     finally:
         db.close()
+
+    assert len(timeouts) == 3
+    assert all(timeout.read == 300 for timeout in timeouts)
+
+
+async def test_gemini_timeout_retries_then_succeeds(monkeypatch):
+    calls = 0
+    sleeps = []
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {
+                "usageMetadata": {"promptTokenCount": 10, "candidatesTokenCount": 5},
+                "candidates": [{"content": {"parts": [{"text": '{"ok": true}'}]}}],
+            }
+
+    class FlakyClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *args, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise httpx.ReadTimeout("upstream stalled")
+            return Response()
+
+    async def record_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(gemini.httpx, "AsyncClient", lambda **kw: FlakyClient())
+    monkeypatch.setattr(gemini, "_sleep", record_sleep, raising=False)
+    monkeypatch.setattr(gemini, "_retry_delay", lambda retry: retry + 1, raising=False)
+    db = SessionLocal()
+    try:
+        result = await GeminiProvider("gemini-3.5-flash", db)._call_api(
+            "prompt", AnalysisReport
+        )
+    finally:
+        db.close()
+
+    assert result == '{"ok": true}'
+    assert calls == 2
+    assert sleeps == [1]
+
+
+async def test_gemini_503_retries_then_succeeds(monkeypatch):
+    statuses = [503, 200]
+    sleeps = []
+
+    class Response:
+        text = "temporarily unavailable"
+
+        def __init__(self, status_code):
+            self.status_code = status_code
+
+        def json(self):
+            return {
+                "usageMetadata": {},
+                "candidates": [{"content": {"parts": [{"text": "{}"}]}}],
+            }
+
+    class FlakyClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *args, **kwargs):
+            return Response(statuses.pop(0))
+
+    async def record_sleep(seconds):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr(gemini.httpx, "AsyncClient", lambda **kw: FlakyClient())
+    monkeypatch.setattr(gemini, "_sleep", record_sleep, raising=False)
+    monkeypatch.setattr(gemini, "_retry_delay", lambda retry: retry + 1, raising=False)
+    db = SessionLocal()
+    try:
+        result = await GeminiProvider("gemini-3.5-flash", db)._call_api(
+            "prompt", AnalysisReport
+        )
+    finally:
+        db.close()
+
+    assert result == "{}"
+    assert statuses == []
+    assert sleeps == [1]
+
+
+def test_gemini_retry_delay_is_exponential_with_bounded_jitter(monkeypatch):
+    retry_delay = getattr(gemini, "_retry_delay", None)
+    assert callable(retry_delay)
+    monkeypatch.setattr(gemini.random, "uniform", lambda low, high: 0.25)
+
+    assert retry_delay(0) == 1.25
+    assert retry_delay(1) == 2.25
 
 
 async def test_antigravity_poll_retries_a_read_timeout(monkeypatch):
@@ -84,7 +221,12 @@ async def test_gemini_timeout_is_counted_and_releases_reservation(monkeypatch):
         async def post(self, *args, **kwargs):
             raise httpx.ReadTimeout("upstream stalled")
 
+    async def no_sleep(_seconds):
+        return None
+
     monkeypatch.setattr("app.providers.ai.gemini.httpx.AsyncClient", lambda **kw: TimeoutClient())
+    monkeypatch.setattr(gemini, "_sleep", no_sleep, raising=False)
+    monkeypatch.setattr(gemini, "_retry_delay", lambda _retry: 0, raising=False)
     db = SessionLocal()
     try:
         db.execute(delete(AiUsageLog).where(AiUsageLog.model == model))
@@ -101,13 +243,73 @@ async def test_gemini_timeout_is_counted_and_releases_reservation(monkeypatch):
             .select_from(AiQuotaReservation)
             .where(AiQuotaReservation.model == model)
         ).scalar_one()
-        assert usage == 1
+        assert usage == 3
         assert active == 0
     finally:
         db.execute(delete(AiUsageLog).where(AiUsageLog.model == model))
         db.execute(delete(AiQuotaReservation).where(AiQuotaReservation.model == model))
         db.commit()
         db.close()
+async def test_gemini_timeout_log_contains_render_diagnostics(monkeypatch, caplog):
+    class TimeoutClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *args, **kwargs):
+            raise httpx.ReadTimeout("upstream stalled")
+
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(gemini.httpx, "AsyncClient", lambda **kw: TimeoutClient())
+    monkeypatch.setattr(gemini, "_sleep", no_sleep, raising=False)
+    monkeypatch.setattr(gemini, "_retry_delay", lambda _retry: 0, raising=False)
+    db = SessionLocal()
+    try:
+        with caplog.at_level("WARNING", logger="app.providers.ai.gemini"):
+            with pytest.raises(UpstreamError):
+                await GeminiProvider("gemini-3.5-flash", db)._call_api(
+                    "prompt", AnalysisReport
+                )
+    finally:
+        db.close()
+
+    combined = "\n".join(caplog.messages)
+    assert "model=gemini-3.5-flash" in combined
+    assert "attempt=1/3" in combined
+    assert "prompt_chars=6" in combined
+    assert "elapsed_ms=" in combined
+    assert "status=timeout" in combined
+
+
+async def test_router_logs_primary_model_failure_before_fallback(monkeypatch, caplog):
+    sentinel = object()
+
+    class FakeProvider:
+        def __init__(self, model, db, use_schema=True):
+            self.model = model
+
+        async def analyze_batch(self, contexts):
+            if self.model == "gemini-3.1-flash-lite":
+                raise UpstreamError("timed out after 3 attempts")
+            return sentinel
+
+    monkeypatch.setattr(router, "GeminiProvider", FakeProvider)
+    with caplog.at_level("WARNING", logger="app.providers.ai.router"):
+        result, model = await router.analyze_batch(object(), [])
+
+    assert result is sentinel
+    assert model == "gemma-4-31b-it"
+    assert any(
+        "AI provider failed model=gemini-3.1-flash-lite" in message
+        and "error=timed out after 3 attempts" in message
+        for message in caplog.messages
+    )
+
+
 async def test_antigravity_deadline_counts_http_timeout_wall_clock(monkeypatch):
     now = 0.0
     calls = 0
