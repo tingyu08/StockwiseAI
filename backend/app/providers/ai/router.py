@@ -1,6 +1,6 @@
 """AI 降級鏈 Router。
 
-例行批次：flash-lite → gemma-4（額度盡或限流時自動降級）
+例行批次：僅使用 flash-lite，不設備援模型
 深度分析：3.5-flash（不降級——額度盡即回報，品質不可替代）
 """
 import logging
@@ -14,36 +14,37 @@ from app.providers.ai.schemas import AnalysisReport, BatchAnalysisResult
 
 logger = logging.getLogger(__name__)
 
-ROUTINE_CHAIN = [
-    ("gemini-3.1-flash-lite", True),
-    ("gemma-4-31b-it", False),  # Gemma 不支援 response_schema
-]
+ROUTINE_CHAIN = ["gemini-3.1-flash-lite"]
 DEEP_MODEL = "gemini-3.5-flash"
-PREMIUM_CHAIN = [(DEEP_MODEL, True), *ROUTINE_CHAIN]
+PREMIUM_CHAIN = [DEEP_MODEL, *ROUTINE_CHAIN]
+
+
+def _next_step(chain: list[str], index: int) -> str:
+    return "falling back to next model" if index + 1 < len(chain) else "no models remaining"
 
 
 async def analyze_batch(db: Session, contexts: list[AnalysisContext]) -> tuple[BatchAnalysisResult, str]:
     """回傳 (結果, 實際使用的模型)。"""
     last_error: Exception | None = None
-    for model, use_schema in ROUTINE_CHAIN:
+    for index, model in enumerate(ROUTINE_CHAIN):
         try:
-            provider = GeminiProvider(model, db, use_schema=use_schema)
+            provider = GeminiProvider(model, db)
             result = await provider.analyze_batch(contexts)
             return result, model
         except (QuotaExceededError, UpstreamError) as exc:
             logger.warning(
-                "AI provider failed model=%s operation=batch error_type=%s error=%s; "
-                "falling back to next model",
+                "AI provider failed model=%s operation=batch error_type=%s error=%s; %s",
                 model,
                 type(exc).__name__,
                 exc.message,
+                _next_step(ROUTINE_CHAIN, index),
             )
             last_error = exc
     raise UpstreamError("所有例行分析模型皆不可用") from last_error
 
 
 async def analyze_deep(db: Session, context: AnalysisContext) -> tuple[AnalysisReport, str]:
-    provider = GeminiProvider(DEEP_MODEL, db, use_schema=True)
+    provider = GeminiProvider(DEEP_MODEL, db)
     return await provider.analyze_deep(context), DEEP_MODEL
 
 
@@ -52,18 +53,19 @@ async def analyze_trading_batch(
 ) -> tuple[BatchAnalysisResult, str]:
     """交易決策分析優先使用 3.5，失敗或額度不足時自動降級。"""
     last_error: Exception | None = None
-    for model, use_schema in PREMIUM_CHAIN:
+    for index, model in enumerate(PREMIUM_CHAIN):
         try:
-            provider = GeminiProvider(model, db, use_schema=use_schema)
+            provider = GeminiProvider(model, db)
             result = await provider.analyze_batch(contexts)
             return result, model
         except (QuotaExceededError, UpstreamError) as exc:
             logger.warning(
                 "AI provider failed model=%s operation=trading_batch error_type=%s "
-                "error=%s; falling back to next model",
+                "error=%s; %s",
                 model,
                 type(exc).__name__,
                 exc.message,
+                _next_step(PREMIUM_CHAIN, index),
             )
             last_error = exc
     raise UpstreamError("所有交易分析模型皆不可用") from last_error
@@ -72,17 +74,17 @@ async def analyze_trading_batch(
 async def generate_structured(db: Session, prompt: str, output_model):
     """通用結構化生成，走例行降級鏈。回傳 (結果, 模型)。"""
     last_error: Exception | None = None
-    for model, use_schema in ROUTINE_CHAIN:
+    for index, model in enumerate(ROUTINE_CHAIN):
         try:
-            provider = GeminiProvider(model, db, use_schema=use_schema)
+            provider = GeminiProvider(model, db)
             return await provider.generate(prompt, output_model), model
         except (QuotaExceededError, UpstreamError) as exc:
             logger.warning(
-                "AI provider failed model=%s operation=structured error_type=%s error=%s; "
-                "falling back to next model",
+                "AI provider failed model=%s operation=structured error_type=%s error=%s; %s",
                 model,
                 type(exc).__name__,
                 exc.message,
+                _next_step(ROUTINE_CHAIN, index),
             )
             last_error = exc
     raise UpstreamError("所有模型皆不可用") from last_error
@@ -91,17 +93,18 @@ async def generate_structured(db: Session, prompt: str, output_model):
 async def generate_premium_structured(db: Session, prompt: str, output_model):
     """重要摘要優先使用 3.5，失敗或額度不足時自動降級。"""
     last_error: Exception | None = None
-    for model, use_schema in PREMIUM_CHAIN:
+    for index, model in enumerate(PREMIUM_CHAIN):
         try:
-            provider = GeminiProvider(model, db, use_schema=use_schema)
+            provider = GeminiProvider(model, db)
             return await provider.generate(prompt, output_model), model
         except (QuotaExceededError, UpstreamError) as exc:
             logger.warning(
                 "AI provider failed model=%s operation=premium_structured error_type=%s "
-                "error=%s; falling back to next model",
+                "error=%s; %s",
                 model,
                 type(exc).__name__,
                 exc.message,
+                _next_step(PREMIUM_CHAIN, index),
             )
             last_error = exc
     raise UpstreamError("所有摘要模型皆不可用") from last_error

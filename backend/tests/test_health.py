@@ -46,7 +46,7 @@ def test_usage_lists_all_quota_models(client):
     models = {row["model"] for row in body["data"]}
     assert "gemini-3.1-flash-lite" in models
     assert "gemini-3.5-flash" in models
-    assert "gemma-4-31b-it" in models
+    assert "gemma-4-31b-it" not in models
     for row in body["data"]:
         assert row["used"] == 0
         assert row["remaining"] == row["rpd"]

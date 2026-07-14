@@ -2,7 +2,7 @@
 
 > 專案代號：`stock-ai-advisor`
 > 目標市場：台股＋美股雙市場（前端 Radio Button 切換，含 ETF）
-> AI 方案：全免費雲端（Gemini 3.1 Flash Lite ＋ Gemini 3.5 Flash ＋ Gemma 4 31B ＋ Antigravity，不用本地模型）
+> AI 方案：全免費雲端（Gemini 3.1 Flash Lite ＋ Gemini 3.5 Flash ＋ Antigravity，不用本地模型）
 > 核心價值：AI 驅動的個股分析、策略建議、走勢預測、模擬買賣、多股報酬率與折溢價比較
 
 **文件結構**：本文件（產品計畫）｜[docs/SA.md](docs/SA.md)（系統分析：使用案例、功能/非功能需求）｜[docs/SD.md](docs/SD.md)（系統設計：技術決策 ADR、前後端目錄結構、API 規格、DB Schema、部署設計）
@@ -27,7 +27,7 @@
 |------|---------|--------|
 | A. 個股走勢呈現 | K 線圖 / 折線圖、技術指標疊圖（MA、KD、MACD、RSI、布林通道）、成交量 | P0 |
 | A2. 雙市場切換 | 全站頂部 Radio Button 切換「台股 / 美股」，切換後所有頁面（走勢、比較、折溢價、模擬交易）都套用該市場的股票池與交易規則 | P0 |
-| B. AI 分析與策略建議 | 串接 Gemini/Gemma，綜合技術面＋籌碼面＋新聞面產生分析報告、買賣建議與信心分數 | P0 |
+| B. AI 分析與策略建議 | 串接 Gemini，綜合技術面＋籌碼面＋新聞面產生分析報告、買賣建議與信心分數 | P0 |
 | C. 走勢預測 | 兩層並行：(1) 統計/量化模型預測區間（如 Prophet、簡單回歸）；(2) AI 情境推演（樂觀/中性/悲觀三情境） | P1 |
 | D. 報酬率比較 | 多股票報酬率列表（日/週/月/YTD/年化）＋正規化折線圖疊加比較 | P0 |
 | E. 折溢價分析 | ETF 市價 vs 淨值（NAV）折溢價率列表、歷史折溢價走勢圖、異常折溢價警示 | P1 |
@@ -66,7 +66,7 @@
 ┌───────┴──────┐ ┌─────┴─────┐  ┌────────┴────────┐
 │ SQLite/      │ │ 外部資料源 │  │ AI Provider 層  │
 │ PostgreSQL   │ │ 台股:FinMind│ │ Gemini 免費額度  │
-│ (價格快取、   │ │  /TWSE API │ │ (主) / Gemma 4  │
+│ (價格快取、   │ │  /TWSE API │ │ structured output│
 │  交易紀錄)    │ │ 美股:yfinance│ (備援，全雲端)   │
 └──────────────┘ └───────────┘  └─────────────────┘
 ```
@@ -80,14 +80,14 @@
 | 後端 | Python FastAPI | 量化生態（pandas、TA-Lib、backtesting.py）最完整 |
 | 資料庫 | SQLite（本機）／ PostgreSQL Neon 免費層（雲端），SQLAlchemy 統一兩者 | 單人使用 SQLite 足夠；部署細節見 [SD.md §6](docs/SD.md) |
 | 部署 | 方案 A：本機 Docker Compose（預設）；方案 B：Vercel＋Render Free＋Neon＋GitHub Actions cron | 兩案皆 $0，見 [SD.md §6](docs/SD.md) |
-| AI | **Gemini API 免費額度**（`gemini-3.1-flash-lite` 批次主力、`gemini-3.5-flash` 深度分析、`gemma-4-31b-it` 大額度備援），全雲端同一把 key；經 AI Provider 抽象層可隨時換供應商 | 免費、支援結構化輸出 |
+| AI | **Gemini API 免費額度**（`gemini-3.1-flash-lite` 批次主力、`gemini-3.5-flash` 深度分析），全雲端同一把 key；經 AI Provider 抽象層可隨時換供應商 | 免費、支援結構化輸出 |
 | 台股行情 | FinMind（免費有 API）＋ TWSE/TPEX OpenAPI（折溢價、官方資料） | 免費、涵蓋日線與基本面 |
 | 美股行情 | yfinance（日線、ETF NAV）＋ FinMind USStockPrice（備援） | 免費、雲端 IP 限流時可降級 |
 | 排程 | APScheduler（每日收盤後更新資料、觸發 AI 模擬交易） | 輕量夠用 |
 
 ### 2.2 關鍵設計原則
 - **Market Provider 抽象**：`MarketDataProvider` 介面定義 `get_daily_prices() / get_etf_nav() / get_institutional_flows() / search_stocks()`，台股（FinMind/TWSE）與美股（yfinance）各自實作。所有市場差異（交易時間、幣別、漲跌幅限制、法人資料有無）封裝在 Provider 內，上層業務邏輯完全不分市場。
-- **AI Provider 抽象**：`AIProvider` 介面定義 `analyze(context) -> StructuredReport`，實作 Gemini（3.1 Flash Lite / 3.5 Flash）與 Gemma 4 兩個 Provider（同一把 Gemini API key），依額度自動降級；日後要換 Claude/OpenAI 只需新增實作。
+- **AI Provider 抽象**：`AIProvider` 介面定義 `analyze(context) -> StructuredReport`，實作 Gemini（3.1 Flash Lite / 3.5 Flash）；例行分析固定使用 Flash Lite，重要分析可降級至 Flash Lite。日後要換 Claude/OpenAI 只需新增實作。
 - **Repository Pattern**：所有資料存取（價格、交易、AI 報告）走抽象介面，儲存層可替換。
 - **統一 API 回應格式**：`{ success, data, error, meta }`。
 - **不可變資料流**：模擬交易帳戶狀態每次變更產生新紀錄（事件溯源式交易日誌），方便稽核 AI 決策。
@@ -124,9 +124,7 @@ watchlists       自選股清單
 |------|------|---------|------|
 | **Gemini 3.1 Flash Lite**（例行批次主力） | `gemini-3.1-flash-lite` | 本帳號實測：**15 RPM / 250K TPM / 500 RPD** | 額度最寬裕，支援 structured output，例行技術面批次分析品質足夠 |
 | **Gemini 3.5 Flash**（重要決策） | `gemini-3.5-flash` | 本帳號實測：**5 RPM / 250K TPM / 20 RPD** | 優先用於單檔深度分析、每日簡報總結與模擬交易分析；額度盡或上游失敗時，後兩者自動降級 |
-| **Gemma 4 31B**（大額度備援） | `gemma-4-31b-it`（Gemini API 同一把 key） | 本帳號實測：**1,500 RPD**，全系統額度最大 | 開放權重模型，支援 function calling 與 JSON 輸出、256K context；flash-lite 限流時無縫接手，額度大到可承接全部批次量 |
 | **Antigravity Agent**（研究型任務） | `antigravity-preview-05-2026`（Interactions API，底層 Gemini 3.5 Flash） | 免費層 60 RPM / 100K TPM / 100 RPD | 自帶沙箱＋Google 搜尋＋URL 抓取＋程式碼執行的託管 agent，適合「個股新聞/事件研究」這種需要自己上網查資料的任務；**不支援 structured output、不支援 temperature 等參數、preview 狀態隨時可能變動**，故不當主分析管線 |
-| **OpenRouter 免費模型**（最後備援，選配） | `gemma-4-31b-it:free` 等 | OpenRouter 獨立免費額度 | Google 整把 key 被限流時的異地備援，同模型品質一致 |
 
 **Antigravity 的定位（分工）**：
 - 主分析管線（技術面/籌碼面 → 結構化報告）維持用 Gemini（flash-lite/3.5-flash）的 `response_schema`——因為模擬交易引擎必須吃到可靠的 JSON，Antigravity 明確不支援 structured output，只能 prompt 要求 JSON 再解析，可靠度不足以驅動自動下單。
@@ -134,14 +132,13 @@ watchlists       自選股清單
 - Preview 期間沙箱運算不計費，但 agent 每次任務 token 消耗遠大於單次 generateContent，需納入用量記錄；GA 後若改計價策略，Provider 抽象層可直接停用。
 
 **配額策略（依儀表板實測額度設計）**：
-1. **批次分析**：一次請求分析多檔股票（structured output 回傳陣列，每批 8~10 檔）。30 檔託管清單 = 台股 2 請求＋美股 2 請求，**每日例行批次只吃 4 個請求**（TPM 250K 遠夠裝下多檔的輸入資料）
+1. **批次分析**：一次請求分析多檔股票（structured output 回傳陣列，每批 4 檔）。30 檔託管清單每日約需 8 個例行請求（TPM 250K 足以容納每批輸入資料）
 2. **模型分流（四層）**：
    - 例行每日批次 → `gemini-3.1-flash-lite`（500 RPD，主力）
    - 單檔深度分析（使用者觸發）→ `gemini-3.5-flash`（品質不可替代，不降級）
-   - 每日簡報總結、模擬交易分析 → `gemini-3.5-flash` 優先，失敗時依序降級至 Flash Lite、Gemma
-   - flash-lite 限流或量大時 → `gemma-4-31b-it`（1,500 RPD，同一把 key 但額度獨立計算）
-   - Google 整把 key 被限流（罕見）→ OpenRouter `gemma-4-31b-it:free`（選配，獨立額度）
-3. **請求節流器**：全域 rate limiter 按模型別對齊儀表板實際額度，超出自動降級到下一層
+   - 每日簡報總結、模擬交易分析 → `gemini-3.5-flash` 優先，失敗時降級至 Flash Lite
+   - Flash Lite 例行分析失敗或額度不足 → 明確回報失敗，不改用非結構化模型
+3. **請求節流器**：全域 rate limiter 按模型別對齊儀表板實際額度，避免超打免費額度
 4. **分析快取**：同一檔股票同一交易日的分析只跑一次
 5. **用量記錄**：每次呼叫記錄 provider/model/token 數，儀表板可見各模型剩餘額度
 6. **額度設定化**：額度數字不寫死，放設定檔（Google 改額度頻繁且各帳號不同），對照 AI Studio 儀表板填入
@@ -152,7 +149,6 @@ watchlists       自選股清單
 | 例行批次分析（30 檔，批次化） | 3.1 Flash Lite | ~4 | 500 RPD | 125 倍 |
 | 模擬交易批次＋每日簡報總結 | 3.5 Flash（可降級） | ~5 | 20 RPD | 約 4 倍 |
 | 單檔深度分析（個股頁觸發，含快取） | 3.5 Flash | ~5–10 | 20 RPD | 2~4 倍 |
-| 溢出/備援 | Gemma 4 31B | 0（平時） | 1,500 RPD | 全系統最大口袋 |
 | 新聞/事件研究 | Antigravity | ~10–30 | 100 RPD（獨立額度） | 3~10 倍 |
 
 
@@ -168,7 +164,7 @@ watchlists       自選股清單
 2. **Prompt 設計**：
    - System prompt 定義角色（量化分析師）、輸出 JSON schema、免責立場
    - Prompt 版本化（`prompt_version` 存 DB），方便迭代比較品質
-   - Gemini/Gemma 都用原生 `response_schema` / JSON mode 強制 JSON，落地前一律過 Pydantic 驗證，驗證失敗自動重試一次
+   - Gemini 使用原生 `response_schema` 強制 JSON，落地前一律通過 Pydantic；第一次驗證失敗時，連同原始輸出與錯誤要求模型修正一次
 3. **結構化輸出 schema**：
    ```json
    {
@@ -231,7 +227,7 @@ watchlists       自選股清單
 - [x] 股票搜尋、自選清單、群組與排序（依市場隔離）
 
 ### Phase 2：AI 分析與報酬率比較（~1 週）→ 功能 B、D
-- [x] Gemini Provider（flash-lite / 3.5-flash，structured output）＋ Gemma 4 fallback
+- [x] Gemini Provider（flash-lite / 3.5-flash，structured output；例行分析不設備援模型）
 - [x] RPD/RPM/TPM 節流、分析快取、用量記錄
 - [x] 分析管線（輸入組裝、結構化報告落地）
 - [x] 個股頁 AI 報告卡 UI
@@ -270,7 +266,7 @@ watchlists       自選股清單
 | 風險 | 對策 |
 |------|------|
 | 免費資料源限流/斷供 | 全部落地快取；資料源抽象成 Provider 介面，可替換（台股 FinMind ↔ TWSE；美股 yfinance ↔ Stooq）；yfinance 為非官方爬蟲，介面偶爾失效，需鎖版本＋監控 |
-| Gemini 免費額度不足/限流 | 節流器對齊各模型實際額度；分析快取（同一天同一檔不重跑）；自動降級鏈 flash-lite → Gemma 4（1,500 RPD）→ OpenRouter；用量儀表板 |
+| Gemini 免費額度不足/限流 | 節流器對齊各模型實際額度；分析快取（同一天同一檔不重跑）；例行分析明確失敗，重要分析只降級至 Flash Lite；用量儀表板 |
 | Google 免費層政策再變動（2025/12 已大砍過一次） | 額度數字放設定檔不寫死；報告標示產生模型；Provider 抽象層可快速切換供應商 |
 | AI 建議品質不穩 | Prompt 版本化＋模擬交易績效即品質回饋迴路；回測驗證 |
 | 法規/責任疑慮 | 全站免責聲明；只做模擬交易，不串真實下單 |

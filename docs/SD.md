@@ -72,7 +72,7 @@ backend/
 │   │   └── ai/
 │   │       ├── base.py            # AIProvider 介面 + 降級鏈 Router
 │   │       ├── gemini.py          # flash-lite / 3.5-flash（response_schema）
-│   │       ├── gemma.py           # gemma-4-31b-it（JSON mode）
+│   │       ├── gemini.py          # Gemini structured output provider
 │   │       ├── antigravity.py     # Interactions API（新聞研究）
 │   │       └── schemas.py         # AnalysisReport 等 Pydantic 輸出模型
 │   ├── services/

@@ -1,6 +1,6 @@
 # stock-ai-advisor
 
-AI 股票分析與模擬交易平台（台股＋美股）。免費 AI（Gemini/Gemma）驅動的個股分析、
+AI 股票分析與模擬交易平台（台股＋美股）。免費 AI（Gemini）驅動的個股分析、
 策略建議、走勢預測、AI 模擬買賣、多股報酬率與 ETF 折溢價比較。
 
 ## 文件
@@ -64,7 +64,7 @@ cd ../frontend && npm run test:coverage && npm run lint && npm run build
 
 - 台股／美股搜尋、自選群組與拖曳排序
 - K 線、成交量、MA、布林通道、RSI、KD、MACD
-- Gemini/Gemma 結構化分析與 Antigravity 新聞研究
+- Gemini 結構化分析與 Antigravity 新聞研究
 - 交易所日曆感知的 5／20 日回歸通道預測
 - 多股績效比較與 ETF 折溢價歷史
 - 具持倉限制、原子撮合與交易成本的 AI 模擬交易

@@ -1,3 +1,5 @@
+import inspect
+
 import httpx
 import pytest
 from sqlalchemy import delete, func, select
@@ -16,7 +18,6 @@ def _isolate_ai_usage():
     models = [
         "gemini-3.1-flash-lite",
         "gemini-3.5-flash",
-        "gemma-4-31b-it",
         antigravity.AGENT_ID,
     ]
     db = SessionLocal()
@@ -65,6 +66,47 @@ async def test_gemini_read_timeout_becomes_fallback_eligible(monkeypatch):
 
     assert len(timeouts) == 3
     assert all(timeout.read == 300 for timeout in timeouts)
+
+
+async def test_gemini_provider_always_uses_native_response_schema(monkeypatch):
+    captured_body = None
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        @staticmethod
+        def json():
+            return {
+                "usageMetadata": {},
+                "candidates": [{"content": {"parts": [{"text": "{}"}]}}],
+            }
+
+    class CapturingClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def post(self, *args, **kwargs):
+            nonlocal captured_body
+            captured_body = kwargs["json"]
+            return Response()
+
+    monkeypatch.setattr(gemini.httpx, "AsyncClient", lambda **kw: CapturingClient())
+    db = SessionLocal()
+    try:
+        await GeminiProvider("gemini-3.1-flash-lite", db)._call_api(
+            "prompt", AnalysisReport
+        )
+    finally:
+        db.close()
+
+    assert "use_schema" not in inspect.signature(GeminiProvider).parameters
+    assert "responseSchema" in captured_body["generationConfig"]
+    assert captured_body["systemInstruction"]["parts"][0]["text"] == gemini.SYSTEM_PROMPT
+    assert captured_body["contents"][0]["parts"][0]["text"] == "prompt"
 
 
 async def test_gemini_timeout_retries_then_succeeds(monkeypatch):
@@ -285,27 +327,28 @@ async def test_gemini_timeout_log_contains_render_diagnostics(monkeypatch, caplo
     assert "status=timeout" in combined
 
 
-async def test_router_logs_primary_model_failure_before_fallback(monkeypatch, caplog):
-    sentinel = object()
+async def test_routine_chain_stops_after_single_model_failure(monkeypatch, caplog):
+    used_models = []
 
     class FakeProvider:
-        def __init__(self, model, db, use_schema=True):
+        def __init__(self, model, db):
             self.model = model
+            used_models.append(model)
 
         async def analyze_batch(self, contexts):
-            if self.model == "gemini-3.1-flash-lite":
-                raise UpstreamError("timed out after 3 attempts")
-            return sentinel
+            raise UpstreamError("timed out after 3 attempts")
 
     monkeypatch.setattr(router, "GeminiProvider", FakeProvider)
     with caplog.at_level("WARNING", logger="app.providers.ai.router"):
-        result, model = await router.analyze_batch(object(), [])
+        with pytest.raises(UpstreamError, match="所有例行分析模型皆不可用"):
+            await router.analyze_batch(object(), [])
 
-    assert result is sentinel
-    assert model == "gemma-4-31b-it"
+    assert router.ROUTINE_CHAIN == ["gemini-3.1-flash-lite"]
+    assert used_models == ["gemini-3.1-flash-lite"]
     assert any(
         "AI provider failed model=gemini-3.1-flash-lite" in message
         and "error=timed out after 3 attempts" in message
+        and "no models remaining" in message
         for message in caplog.messages
     )
 
@@ -387,7 +430,7 @@ async def test_trading_analysis_prefers_gemini_35(monkeypatch):
     sentinel = object()
 
     class FakeProvider:
-        def __init__(self, model, db, use_schema=True):
+        def __init__(self, model, db):
             used_models.append(model)
 
         async def analyze_batch(self, contexts):
@@ -410,7 +453,7 @@ async def test_daily_briefing_prefers_gemini_35_then_falls_back(monkeypatch):
     used_models = []
 
     class FakeProvider:
-        def __init__(self, model, db, use_schema=True):
+        def __init__(self, model, db):
             self.model = model
             used_models.append(model)
 

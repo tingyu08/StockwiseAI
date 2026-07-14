@@ -9,10 +9,6 @@ models:
     rpm: 5
     rpd: 20
     tpm: 250000
-  gemma-4-31b-it:
-    rpm: 30
-    rpd: 1500
-    tpm: 250000
   antigravity-preview-05-2026:
     rpm: 60
     rpd: 100
