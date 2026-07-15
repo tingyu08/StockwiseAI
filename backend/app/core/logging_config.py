@@ -53,8 +53,22 @@ class SecretRedactingFilter(logging.Filter):
         return True
 
 
+class SecretRedactingFormatter(logging.Formatter):
+    """Redact secrets after the message and exception traceback are formatted."""
+
+    def __init__(self, settings: Settings, formatter: logging.Formatter | None = None):
+        super().__init__()
+        self.settings = settings
+        self.formatter = formatter or logging.Formatter()
+
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_sensitive(self.formatter.format(record), self.settings)
+
+
 def configure_sensitive_logging(settings: Settings) -> None:
     root = logging.getLogger()
     for handler in root.handlers:
+        if not isinstance(handler.formatter, SecretRedactingFormatter):
+            handler.setFormatter(SecretRedactingFormatter(settings, handler.formatter))
         if not any(isinstance(item, SecretRedactingFilter) for item in handler.filters):
             handler.addFilter(SecretRedactingFilter(settings))

@@ -1,3 +1,4 @@
+import io
 import logging
 
 import httpx
@@ -8,7 +9,11 @@ from sqlalchemy import select
 
 from app.core.config import Settings, get_settings
 from app.core.db import SessionLocal
-from app.core.logging_config import SecretRedactingFilter, redact_sensitive
+from app.core.logging_config import (
+    SecretRedactingFilter,
+    configure_sensitive_logging,
+    redact_sensitive,
+)
 from app.main import app
 from app.models import User, UserSession
 
@@ -105,3 +110,46 @@ def test_sensitive_url_object_is_redacted_from_log_arguments():
     assert "finmind-private-token" not in record.getMessage()
     assert "[REDACTED]" in record.getMessage()
     assert record.args[1] == 200
+
+
+def test_sensitive_mapping_arguments_are_redacted_from_logs():
+    settings = Settings(_env_file=None, gemini_api_key="synthetic-mapping-secret")
+    record = logging.LogRecord(
+        "mapping-test",
+        logging.INFO,
+        __file__,
+        1,
+        "request key=%(api_key)s attempt=%(attempt)d",
+        {"api_key": "synthetic-mapping-secret", "attempt": 2},
+        None,
+    )
+
+    assert SecretRedactingFilter(settings).filter(record) is True
+    assert "synthetic-mapping-secret" not in record.getMessage()
+    assert "[REDACTED]" in record.getMessage()
+    assert record.args["attempt"] == 2
+
+
+def test_configured_logging_redacts_secrets_from_exception_tracebacks():
+    secret = "synthetic-exception-secret"
+    settings = Settings(_env_file=None, finmind_token=secret)
+    stream = io.StringIO()
+    handler = logging.StreamHandler(stream)
+    handler.setFormatter(logging.Formatter("%(levelname)s %(message)s"))
+    root = logging.getLogger()
+    original_handlers = root.handlers[:]
+    root.handlers[:] = [handler]
+
+    try:
+        configure_sensitive_logging(settings)
+        try:
+            raise RuntimeError(f"request failed: https://example.test/data?token={secret}")
+        except RuntimeError:
+            logging.getLogger("exception-redaction-test").exception("provider request failed")
+    finally:
+        root.handlers[:] = original_handlers
+
+    output = stream.getvalue()
+    assert secret not in output
+    assert "[REDACTED]" in output
+    assert "RuntimeError" in output
