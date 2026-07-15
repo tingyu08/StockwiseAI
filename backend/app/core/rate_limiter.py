@@ -57,6 +57,19 @@ def used_today(db: Session, model: str, now: datetime | None = None) -> int:
     return completed + active
 
 
+def usage_snapshot(db: Session) -> list[dict]:
+    quotas = get_settings().load_quotas()
+    return [
+        {
+            "model": model,
+            "rpd": quota.rpd,
+            "used": (used := used_today(db, model)),
+            "remaining": max(0, quota.rpd - used),
+        }
+        for model, quota in quotas.items()
+    ]
+
+
 def remaining_today(db: Session, model: str) -> int:
     quotas = get_settings().load_quotas()
     if model not in quotas:
