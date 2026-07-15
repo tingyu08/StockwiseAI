@@ -15,6 +15,7 @@ from app.core.config import get_settings
 from app.core.auth import require_login
 from app.core.exceptions import register_exception_handlers
 from app.core.logging_config import configure_sensitive_logging
+from app.core.request_timing import install_db_timing, request_timing_middleware
 
 logging.basicConfig(level=logging.INFO)
 REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
@@ -57,10 +58,12 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     settings = get_settings()  # fail fast：缺必填環境變數這裡就會炸
     configure_sensitive_logging(settings)
+    install_db_timing()
     app = FastAPI(title="stock-ai-advisor", version="0.1.0", lifespan=lifespan)
 
     app.middleware("http")(add_security_headers)
     app.middleware("http")(require_login)
+    app.middleware("http")(request_timing_middleware)
 
     app.add_middleware(
         CORSMiddleware,
