@@ -222,6 +222,7 @@ watchlists       自選股清單
 - [x] 台股 Provider：FinMind/TWSE（日線、法人、ETF 淨值）
 - [x] 美股 Provider：yfinance（日線、ETF NAV）＋ FinMind 備援
 - [x] 每日排程更新（兩市場依收盤時間）
+- [x] 新增自選股立即建立可持久化、可重試的 `stock_sync` 工作；既有價格採批次查詢，資料庫寫入與指標重算移出 event loop
 - [x] 技術指標計算服務（MA/KD/MACD/RSI/布林）
 - [x] 前端全域市場切換（Zustand + URL query）
 - [x] 個股頁 K 線、成交量、布林通道與 RSI/KD/MACD 副圖

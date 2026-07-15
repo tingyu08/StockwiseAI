@@ -55,8 +55,11 @@ cd ../frontend && npm run test:coverage && npm run lint && npm run build
 ## 維運與故障恢復
 
 - 背景工作由 DB queue 執行，具 idempotency key、lease、heartbeat 與 stale-job recovery；不要以 HTTP request 存活時間判斷任務成敗。
+- 新增自選股會在清單寫入成功後立即回應，並透過既有 DB queue 建立可重試的 `stock_sync` 背景工作；同步進度可在頁首「工作」中心查看，不會阻塞 Render health check。
+- 行情同步會批次查詢既有價格，並將資料庫寫入與技術指標重算移出 event loop，避免同步期間影響其他 API 請求。
 - GitHub Actions 的排程腳本會等待 `JobRun` 結束才執行下一步；`maintenance` 每週清理 30 天前成功工作、90 天前失敗工作與 90 天前 AI 用量。
 - 新聞/AI 上游逾時時，可在頁首工作中心重試；行情同步會重抓最近 14 天並 upsert，能修正缺口與上游歷史修訂。
+- 任何憑證若曾出現在日誌中，都必須立即撤銷並輪替；請勿將憑證值貼入 issue、文件、提交內容或維運紀錄。
 - Render Free 僅使用單一 instance，migration 可在 start command 執行；升級多 instance 前必須改為單一 release/pre-deploy job。
 - 完整修復與外部驗證邊界見 [docs/AUDIT_REMEDIATION.md](docs/AUDIT_REMEDIATION.md)。
 
