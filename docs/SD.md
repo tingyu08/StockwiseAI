@@ -16,7 +16,7 @@
 | ADR-05 | 圖表庫 | Lightweight Charts（K 線）＋ Recharts（比較/儀表板） | 前者為 TradingView 開源專業金融圖表；後者宣告式好維護 | ECharts（單套通吃但 K 線體驗較差） |
 | ADR-06 | 狀態管理 | Zustand（市場切換等全域）＋ TanStack Query（伺服器資料快取） | 輕量、與 App Router 相容 | Redux（樣板碼多） |
 | ADR-07 | 排程 | APScheduler（進程內） | 單體部署最簡單；雲端免費層配 GitHub Actions cron 觸發 API 補位 | Celery+Redis（多一個付費依賴） |
-| ADR-08 | 部署 | **已定案**：開發期＝方案 A（本機 Docker Compose）→ 上線＝方案 B（Vercel+Render+Neon）→ 用一陣子後視情況遷方案 C（Zeabur） | 先 $0 驗證價值再決定花錢 | — |
+| ADR-08 | 部署 | **已上線（2026-07，方案 B）**：Render Free（後端，`render.yaml`）＋ Neon（DB）＋ Vercel（前端）＋ GitHub Actions cron（排程，`.github/workflows/cron.yml`）；未來視使用情況評估遷方案 C（Zeabur） | 先 $0 驗證價值再決定花錢 | — |
 | ADR-09 | 雲端 DB | **已定案：Neon**（開發期本機 SQLite，上 B 時切 `DATABASE_URL`） | 生態最穩；連線池紀律見 §6.2 | Turso（dialect 年輕）、Supabase（功能過剩） |
 
 ## 2. 整體架構

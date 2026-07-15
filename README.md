@@ -3,6 +3,10 @@
 AI 股票分析與模擬交易平台（台股＋美股）。免費 AI（Gemini）驅動的個股分析、
 策略建議、走勢預測、AI 模擬買賣、多股報酬率與 ETF 折溢價比較。
 
+> **狀態：已上線（2026-07，方案 B）** — 後端 Render Free（`render.yaml`）＋
+> 資料庫 Neon PostgreSQL ＋ 前端 Vercel ＋ 排程 GitHub Actions cron（`.github/workflows/cron.yml`）。
+> 營運成本 $0。
+
 ## 文件
 
 | 文件 | 內容 |
@@ -45,7 +49,8 @@ cd ../frontend && npm run test:coverage && npm run lint && npm run build
 
 ## 安全與通知
 
-- 網站 API 不需要登入或瀏覽器 Token；公開部署時，任何知道網址的人都能操作自選、警示、AI 與模擬交易功能。
+- 網站採「首位註冊者＝擁有者」的帳號制：首次開站建立管理員帳號後即關閉註冊；
+  API 以 httpOnly session cookie＋CSRF 保護，登入失敗有鎖定機制。
 - 設定 `ALERT_WEBHOOK_URL` 後，價格與 ETF 折溢價警示會以 JSON webhook 送出。
 - 外部排程會寫入 `job_runs`，可查詢 queued/running/succeeded/failed 狀態並重試失敗工作。
 - production 必須設定 `ENVIRONMENT=production` 與 `JOB_TOKEN`；後者只保護 GitHub Actions 排程入口。
@@ -81,7 +86,14 @@ cd ../frontend && npm run test:coverage && npm run lint && npm run build
 - MA、RSI、布林策略回測，包含滑價、Sharpe、最大回撤及勝率
 - 價格／折溢價警示、資料新鮮度與 AI 額度監控
 
-## 部署路線（已定案）
+## 部署（方案 B，已上線）
 
-開發＝本機 Docker（方案 A）→ 上線＝Vercel＋Render＋Neon（方案 B，$0）
-→ 使用一段時間後視情況遷 Zeabur（方案 C，$5/月）。細節見 [docs/SD.md §6](docs/SD.md)。
+| 元件 | 平台 | 說明 |
+|------|------|------|
+| 後端 API | Render Free | `render.yaml` blueprint；`ENVIRONMENT=production`、`SCHEDULER_MODE=external`；migration 併入 start command（單 instance 限定） |
+| 資料庫 | Neon PostgreSQL Free | `DATABASE_URL` 於 Render dashboard 設定；連線池 `pool_recycle=300` 讓 DB 可休眠以守住 100 CU-hours/月 |
+| 前端 | Vercel | 網域填入 Render 的 `CORS_ORIGINS` |
+| 排程 | GitHub Actions cron | 平日台股 14:30／美股 05:30（台灣時間）依序執行：新聞→同步→撮合→淨值→警示→AI 批次→總評→產生委託；每週日清理維護；secrets：`BACKEND_URL`、`JOB_TOKEN` |
+
+已知限制：Render Free 冷啟動（閒置 15 分鐘休眠，喚醒約 30~60 秒）；排程有 8 次重試喚醒。
+未來若要免冷啟動可遷 Zeabur（方案 C，$5/月），評估見 [docs/SD.md §6](docs/SD.md)。

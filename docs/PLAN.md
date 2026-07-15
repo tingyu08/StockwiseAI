@@ -4,6 +4,7 @@
 > 目標市場：台股＋美股雙市場（前端 Radio Button 切換，含 ETF）
 > AI 方案：全免費雲端（Gemini 3.1 Flash Lite ＋ Gemini 3.5 Flash ＋ Antigravity，不用本地模型）
 > 核心價值：AI 驅動的個股分析、策略建議、走勢預測、模擬買賣、多股報酬率與折溢價比較
+> **狀態：Phase 0–5 全數完成，已於 2026-07 依方案 B 上線（Render＋Neon＋Vercel＋GitHub Actions，$0）**
 
 **文件結構**：本文件（產品計畫）｜[docs/SA.md](docs/SA.md)（系統分析：使用案例、功能/非功能需求）｜[docs/SD.md](docs/SD.md)（系統設計：技術決策 ADR、前後端目錄結構、API 規格、DB Schema、部署設計）
 
