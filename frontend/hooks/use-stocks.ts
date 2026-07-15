@@ -2,9 +2,18 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { apiGet, apiRequest } from "@/lib/api";
+import { apiGet, apiRequest, trackActiveJob } from "@/lib/api";
 import type { PriceSeries, StockInfo, WatchItem } from "@/lib/types";
 import { useMarketStore } from "@/stores/market";
+
+interface AddWatchResult {
+  symbol: string;
+  market: string;
+  name: string;
+  started: boolean;
+  job: string | null;
+  run_id: number | null;
+}
 
 export function usePrices(symbol: string, range: string) {
   const market = useMarketStore((s) => s.market);
@@ -37,10 +46,15 @@ export function useAddWatch() {
   const market = useMarketStore((s) => s.market);
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (symbol: string) => apiRequest("/watchlist", {
+    mutationFn: (symbol: string) => apiRequest<AddWatchResult>("/watchlist", {
       method: "POST", body: { market: market.toUpperCase(), symbol },
     }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["watchlist", market] }),
+    onSuccess: (result) => {
+      if (result.run_id !== null && result.job) {
+        trackActiveJob({ runId: result.run_id, name: result.job });
+      }
+      qc.invalidateQueries({ queryKey: ["watchlist", market] });
+    },
   });
 }
 
