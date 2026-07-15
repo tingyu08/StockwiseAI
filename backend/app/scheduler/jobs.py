@@ -31,7 +31,7 @@ async def sync_market_daily(market: str) -> dict:
         ).scalars().all()
         for stock in stocks:
             try:
-                await sync_prices(db, stock)
+                await sync_prices(stock.id, stock.market, stock.symbol)
                 synced += 1
             except Exception:
                 logger.exception("sync %s/%s failed", market, stock.symbol)

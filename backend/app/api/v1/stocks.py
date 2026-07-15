@@ -53,7 +53,7 @@ async def search_stocks(
 async def add_stock(body: AddStockBody, db: Session = Depends(get_db)) -> Envelope:
     """建檔並首次同步（首次約 400 天日線）。"""
     stock = await ensure_stock(db, body.market, body.symbol.upper() if body.market == "US" else body.symbol)
-    added = await sync_prices(db, stock)
+    added = await sync_prices(stock.id, stock.market, stock.symbol)
     return ok({**_stock_dto(stock), "synced_rows": added})
 
 
