@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 import app.services as services
 from app.api.v1 import jobs
 from app.core.db import SessionLocal
+from app.models import Stock
 
 
 def test_enqueue_job_is_idempotent_while_active():
@@ -180,3 +181,28 @@ async def test_worker_requeues_transient_failure_before_max_attempts():
         db.commit()
     finally:
         db.close()
+
+
+async def test_stock_sync_job_dispatches_by_scalar_identity(monkeypatch):
+    db = SessionLocal()
+    try:
+        stock = Stock(symbol="QJOB", market="TW", name="Job", currency="TWD", kind="stock")
+        db.add(stock)
+        db.commit()
+        stock_id = stock.id
+    finally:
+        db.close()
+
+    seen = {}
+
+    async def fake_sync(current_id, market, symbol):
+        seen.update({"stock_id": current_id, "market": market, "symbol": symbol})
+        return 7
+
+    monkeypatch.setattr("app.services.sync_service.sync_prices", fake_sync)
+    result = await services.job_service.dispatch_job(
+        "stock_sync", {"market": "TW", "symbol": "QJOB"}
+    )
+
+    assert seen == {"stock_id": stock_id, "market": "TW", "symbol": "QJOB"}
+    assert result == {"market": "TW", "symbol": "QJOB", "synced_rows": 7}

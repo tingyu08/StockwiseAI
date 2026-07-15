@@ -214,6 +214,26 @@ async def dispatch_job(job_type: str, payload: dict) -> dict | None:
         finally:
             db.close()
 
+    if job_type == "stock_sync":
+        from sqlalchemy import select as sa_select
+
+        from app.models import Stock
+        from app.services.sync_service import sync_prices
+
+        market, symbol = payload["market"], payload["symbol"]
+        db = SessionLocal()
+        try:
+            stock = db.execute(
+                sa_select(Stock).where(Stock.market == market, Stock.symbol == symbol)
+            ).scalar_one_or_none()
+            if stock is None:
+                raise NotFoundError(f"尚未追蹤 {market}/{symbol}")
+            stock_id = stock.id
+        finally:
+            db.close()
+        changed = await sync_prices(stock_id, market, symbol)
+        return {"market": market, "symbol": symbol, "synced_rows": changed}
+
     if job_type == "simulation_decide":
         from app.scheduler.jobs import sim_decide_daily
 

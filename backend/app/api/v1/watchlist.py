@@ -1,3 +1,4 @@
+import logging
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Query
@@ -9,9 +10,11 @@ from app.core.db import get_db
 from app.core.envelope import Envelope, ok
 from app.core.exceptions import AppError, NotFoundError
 from app.models import Stock, WatchGroup, WatchlistItem
-from app.services.sync_service import ensure_stock, sync_prices
+from app.services.job_service import enqueue_job
+from app.services.sync_service import ensure_stock
 
 router = APIRouter(tags=["watchlist"])
+logger = logging.getLogger(__name__)
 
 
 class ConflictError(AppError):
@@ -152,8 +155,26 @@ async def add_watch(body: AddWatchBody, db: Session = Depends(get_db)) -> Envelo
         ).scalar_one_or_none()
         db.add(WatchlistItem(stock_id=stock.id, sort_order=(max_order or 0) + 1))
         db.commit()
-    await sync_prices(db, stock)
-    return ok({"symbol": stock.symbol, "market": stock.market, "name": stock.name})
+    job_name = f"sync-{stock.market.lower()}-{stock.symbol.lower()}"
+    try:
+        run_id = enqueue_job(
+            job_name,
+            job_type="stock_sync",
+            payload={"market": stock.market, "symbol": stock.symbol},
+            idempotency_key=f"stock-sync:{stock.market}:{stock.symbol}",
+            max_attempts=3,
+        )
+    except Exception:
+        logger.exception("failed to enqueue stock sync %s/%s", stock.market, stock.symbol)
+        run_id = None
+    return ok({
+        "symbol": stock.symbol,
+        "market": stock.market,
+        "name": stock.name,
+        "started": run_id is not None,
+        "job": job_name if run_id is not None else None,
+        "run_id": run_id,
+    })
 
 
 @router.patch("/watchlist/{symbol}", response_model=Envelope)
