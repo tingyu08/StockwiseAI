@@ -227,6 +227,7 @@ watchlists       自選股清單
 - [x] 前端全域市場切換（Zustand + URL query）
 - [x] 個股頁 K 線、成交量、布林通道與 RSI/KD/MACD 副圖
 - [x] 股票搜尋、自選清單、群組與排序（依市場隔離）
+- [x] 個股 dashboard 聚合 API、分資料新鮮度的前端快取，以及 API／DB 分段耗時觀測
 
 ### Phase 2：AI 分析與報酬率比較（~1 週）→ 功能 B、D
 - [x] Gemini Provider（flash-lite / 3.5-flash，structured output；例行分析不設備援模型）

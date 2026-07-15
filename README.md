@@ -63,6 +63,13 @@ cd ../frontend && npm run test:coverage && npm run lint && npm run build
 - Render Free 僅使用單一 instance，migration 可在 start command 執行；升級多 instance 前必須改為單一 release/pre-deploy job。
 - 完整修復與外部驗證邊界見 [docs/AUDIT_REMEDIATION.md](docs/AUDIT_REMEDIATION.md)。
 
+## 載入效能與診斷
+
+- 個股頁初次載入改用單一 dashboard API，從本地資料庫一次取得行情、預測、既有分析、既有新聞與 AI 用量；讀取頁面不會呼叫外部行情或 AI 服務。
+- 瀏覽器記憶體快取依資料新鮮度區分：dashboard 與價格 5 分鐘、自選清單與已儲存報告／新聞 10 分鐘、AI 用量 1 分鐘；新增、同步或分析完成後會主動更新或失效相關快取。
+- API 回應包含 `Server-Timing`，應用程式日誌則記錄 URL path、`total_ms`、`db_ms` 與 `db_queries`；不記錄 query string、SQL、request body、headers、cookies 或憑證。
+- 這些調整可減少暖機後的重複請求並協助區分 Render、Neon 或 SQL 延遲，但不會消除 Render Free 的 cold start。
+
 ## 主要功能
 
 - 台股／美股搜尋、自選群組與拖曳排序
