@@ -3,38 +3,10 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiGet, apiRequest, ApiError } from "@/lib/api";
+import type { AnalysisData, UsageRow } from "@/lib/types";
 import { useMarketStore } from "@/stores/market";
 
-export interface Scenario {
-  target_price: number;
-  trigger_condition: string;
-  probability: number;
-}
-
-export interface AnalysisData {
-  trade_date: string;
-  kind: "routine" | "deep" | "news";
-  model: string;
-  report: {
-    symbol: string;
-    action: "buy" | "sell" | "hold";
-    confidence: number;
-    target_price_low: number;
-    target_price_high: number;
-    stop_loss: number;
-    reasoning: string;
-    scenarios: { bull: Scenario; base: Scenario; bear: Scenario };
-    risks: string[];
-  };
-  created_at: string | null;
-}
-
-export interface UsageRow {
-  model: string;
-  rpd: number;
-  used: number;
-  remaining: number;
-}
+export type { AnalysisData, Scenario, UsageRow } from "@/lib/types";
 
 export function useAnalysis(symbol: string) {
   const market = useMarketStore((s) => s.market);

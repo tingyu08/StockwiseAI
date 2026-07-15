@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { apiGet } from "@/lib/api";
+import type { PredictionData } from "@/lib/types";
 import { useMarketStore } from "@/stores/market";
 
 export interface PremiumRow {
@@ -21,19 +22,7 @@ export interface PremiumHistoryPoint {
   premium_pct: number | null;
 }
 
-export interface PredictionBandPoint {
-  date: string;
-  mid: number;
-  upper: number;
-  lower: number;
-}
-
-export interface PredictionData {
-  trade_date: string;
-  method: string;
-  horizons: Record<string, PredictionBandPoint[]>;
-  disclaimer: string;
-}
+export type { PredictionBandPoint, PredictionData } from "@/lib/types";
 
 export function usePremiumList() {
   const market = useMarketStore((s) => s.market);

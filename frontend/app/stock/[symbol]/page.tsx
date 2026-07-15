@@ -7,8 +7,7 @@ import { ReportCard } from "@/components/analysis/report-card";
 import { CandlestickChart } from "@/components/charts/candlestick";
 import { TechnicalIndicatorsChart } from "@/components/charts/technical-indicators";
 import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
-import { usePredictions } from "@/hooks/use-premium";
-import { usePrices } from "@/hooks/use-stocks";
+import { useStockDashboard } from "@/hooks/use-dashboard";
 import { useMarketStore } from "@/stores/market";
 
 const RANGES = [
@@ -26,8 +25,7 @@ export default function StockPage({
   const market = useMarketStore((s) => s.market);
   const [range, setRange] = useState<"3m" | "6m" | "1y">("1y");
   const [showPrediction, setShowPrediction] = useState(true);
-  const { data, isLoading, isError, error } = usePrices(symbol, range);
-  const { data: prediction } = usePredictions(symbol);
+  const { data, isLoading, isError, error } = useStockDashboard(symbol, range);
 
   const last = data?.series.at(-1);
 
@@ -85,15 +83,25 @@ export default function StockPage({
           <CandlestickChart
             data={data.series}
             market={market}
-            prediction={showPrediction ? prediction?.horizons["20"] : undefined}
+            prediction={showPrediction ? data.prediction?.horizons["20"] : undefined}
           />
           <TechnicalIndicatorsChart data={data.series} />
           <FreshnessNote>{FRESHNESS.prices}</FreshnessNote>
         </div>
       )}
 
-      <ReportCard symbol={symbol} />
-      <NewsCard symbol={symbol} />
+      <ReportCard
+        symbol={symbol}
+        data={data?.analysis ?? null}
+        usage={data?.usage ?? []}
+        isLoading={isLoading}
+      />
+      <NewsCard
+        symbol={symbol}
+        data={data?.news ?? null}
+        usage={data?.usage ?? []}
+        isLoading={isLoading}
+      />
     </div>
   );
 }

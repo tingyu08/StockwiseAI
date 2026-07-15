@@ -11,14 +11,10 @@ import {
   waitForJob,
   type StartedJob,
 } from "@/lib/api";
+import type { NewsData } from "@/lib/types";
 import { useMarketStore } from "@/stores/market";
 
-export interface NewsData {
-  date: string;
-  model: string;
-  summary: string;
-  created_at: string | null;
-}
+export type { NewsData } from "@/lib/types";
 
 export function useNews(symbol: string) {
   const market = useMarketStore((s) => s.market);

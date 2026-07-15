@@ -2,13 +2,10 @@
 
 import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import {
-  useAnalysis,
   useRunDeep,
   useRunRoutine,
-  useUsage,
-  type AnalysisData,
 } from "@/hooks/use-analysis";
-import { ApiError } from "@/lib/api";
+import type { AnalysisData, UsageRow } from "@/lib/types";
 
 const ACTION_STYLE: Record<string, { label: string; cls: string }> = {
   buy: { label: "買進", cls: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200" },
@@ -18,15 +15,20 @@ const ACTION_STYLE: Record<string, { label: string; cls: string }> = {
 
 const SCENARIO_LABEL = { bull: "樂觀", base: "中性", bear: "悲觀" } as const;
 
-export function ReportCard({ symbol }: { symbol: string }) {
-  const { data, isLoading, error } = useAnalysis(symbol);
+interface ReportCardProps {
+  symbol: string;
+  data: AnalysisData | null;
+  usage: UsageRow[];
+  isLoading: boolean;
+}
+
+export function ReportCard({ symbol, data, usage, isLoading }: ReportCardProps) {
   const routine = useRunRoutine(symbol);
   const deep = useRunDeep(symbol);
-  const { data: usage } = useUsage();
 
   const deepRemaining =
-    usage?.find((u) => u.model === "gemini-3.5-flash")?.remaining ?? null;
-  const noReport = error instanceof ApiError && error.status === 404;
+    usage.find((u) => u.model === "gemini-3.5-flash")?.remaining ?? null;
+  const noReport = data === null;
   const pending = routine.isPending || deep.isPending;
 
   return (

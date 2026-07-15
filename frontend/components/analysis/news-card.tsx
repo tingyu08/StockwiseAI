@@ -1,18 +1,22 @@
 "use client";
 
 import { FreshnessNote } from "@/components/freshness-note";
-import { useNews, useRunNews } from "@/hooks/use-news";
-import { useUsage } from "@/hooks/use-analysis";
-import { ApiError } from "@/lib/api";
+import { useRunNews } from "@/hooks/use-news";
+import type { NewsData, UsageRow } from "@/lib/types";
 
-export function NewsCard({ symbol }: { symbol: string }) {
-  const { data, isLoading, error } = useNews(symbol);
+interface NewsCardProps {
+  symbol: string;
+  data: NewsData | null;
+  usage: UsageRow[];
+  isLoading: boolean;
+}
+
+export function NewsCard({ symbol, data, usage, isLoading }: NewsCardProps) {
   const run = useRunNews(symbol);
-  const { data: usage } = useUsage();
 
   const remaining =
-    usage?.find((u) => u.model.startsWith("antigravity"))?.remaining ?? null;
-  const noNews = error instanceof ApiError && error.status === 404;
+    usage.find((u) => u.model.startsWith("antigravity"))?.remaining ?? null;
+  const noNews = data === null;
 
   return (
     <section className="rounded-xl border border-neutral-200 p-5 dark:border-neutral-800">
