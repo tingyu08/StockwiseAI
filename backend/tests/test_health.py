@@ -1,7 +1,20 @@
+from pathlib import Path
+
+import yaml
 from sqlalchemy.exc import OperationalError
 
 from app.core.db import get_db
 from app.main import app
+
+
+def test_render_health_check_uses_process_liveness():
+    render_config = yaml.safe_load(
+        (Path(__file__).resolve().parents[2] / "render.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+
+    assert render_config["services"][0]["healthCheckPath"] == "/api/v1/health/live"
 
 
 def test_health_returns_envelope(client):

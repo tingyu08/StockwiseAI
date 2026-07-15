@@ -49,7 +49,7 @@ cd ../frontend && npm run test:coverage && npm run lint && npm run build
 - 設定 `ALERT_WEBHOOK_URL` 後，價格與 ETF 折溢價警示會以 JSON webhook 送出。
 - 外部排程會寫入 `job_runs`，可查詢 queued/running/succeeded/failed 狀態並重試失敗工作。
 - production 必須設定 `ENVIRONMENT=production` 與 `JOB_TOKEN`；後者只保護 GitHub Actions 排程入口。
-- `/health/live` 只檢查程序，`/health/ready` 會實際檢查 DB；Render health check 使用後者。
+- `/health/live` 只檢查程序並供 Render health check 使用；`/health/ready` 會實際檢查 DB，供獨立監控資料庫狀態。
 - 長任務會顯示在頁首「工作」中心；換頁後可恢復追蹤，失敗工作可直接重試。
 
 ## 維運與故障恢復
