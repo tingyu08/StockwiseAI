@@ -8,7 +8,7 @@ import pandas as pd
 from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
-from app.core.db import SessionLocal, engine
+from app.core.db import SessionLocal
 from app.core.exceptions import NotFoundError
 from app.models import DailyPrice, Indicator, Stock
 from app.providers.market.base import OhlcvRow

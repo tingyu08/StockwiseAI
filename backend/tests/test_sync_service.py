@@ -1,10 +1,9 @@
-import asyncio
 import threading
 from datetime import timedelta
 
 from sqlalchemy import event
 
-from app.core.db import SessionLocal
+from app.core.db import SessionLocal, engine
 from app.models import DailyPrice, Stock
 from app.providers.market.base import OhlcvRow
 from app.services import sync_service
@@ -102,11 +101,11 @@ def test_persist_price_rows_loads_existing_prices_in_one_query(monkeypatch):
             if statement.lstrip().upper().startswith("SELECT") and "daily_prices" in statement:
                 selects.append(statement)
 
-        event.listen(sync_service.engine, "before_cursor_execute", count_select)
+        event.listen(engine, "before_cursor_execute", count_select)
         try:
             assert sync_service._persist_price_rows(stock.id, rows) == 3
         finally:
-            event.remove(sync_service.engine, "before_cursor_execute", count_select)
+            event.remove(engine, "before_cursor_execute", count_select)
         assert len(selects) == 1
     finally:
         db.close()
