@@ -1,3 +1,6 @@
+import logging
+
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
@@ -5,7 +8,7 @@ from sqlalchemy import select
 
 from app.core.config import Settings, get_settings
 from app.core.db import SessionLocal
-from app.core.logging_config import redact_sensitive
+from app.core.logging_config import SecretRedactingFilter, redact_sensitive
 from app.main import app
 from app.models import User, UserSession
 
@@ -84,3 +87,21 @@ def test_production_requires_only_job_secret():
 def test_sensitive_configuration_values_are_redacted_from_logs():
     settings = Settings(_env_file=None, gemini_api_key="gemini-private-key", finmind_token="finmind-private-token", job_token="job-private-token")
     assert redact_sensitive("keys: gemini-private-key job-private-token", settings) == "keys: [REDACTED] [REDACTED]"
+
+
+def test_sensitive_url_object_is_redacted_from_log_arguments():
+    settings = Settings(_env_file=None, finmind_token="finmind-private-token")
+    record = logging.LogRecord(
+        "httpx",
+        logging.INFO,
+        __file__,
+        1,
+        "HTTP Request: %s status=%d",
+        (httpx.URL("https://example.test/data?token=finmind-private-token"), 200),
+        None,
+    )
+
+    assert SecretRedactingFilter(settings).filter(record) is True
+    assert "finmind-private-token" not in record.getMessage()
+    assert "[REDACTED]" in record.getMessage()
+    assert record.args[1] == 200

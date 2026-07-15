@@ -24,6 +24,14 @@ def redact_sensitive(message: str, settings: Settings) -> str:
     return redacted
 
 
+def _redact_arg(value: object, settings: Settings) -> object:
+    if isinstance(value, str):
+        return redact_sensitive(value, settings)
+    rendered = str(value)
+    redacted = redact_sensitive(rendered, settings)
+    return redacted if redacted != rendered else value
+
+
 class SecretRedactingFilter(logging.Filter):
     def __init__(self, settings: Settings):
         super().__init__()
@@ -34,16 +42,12 @@ class SecretRedactingFilter(logging.Filter):
             record.msg = redact_sensitive(record.msg, self.settings)
         if isinstance(record.args, Mapping):
             record.args = {
-                key: redact_sensitive(value, self.settings)
-                if isinstance(value, str)
-                else value
+                key: _redact_arg(value, self.settings)
                 for key, value in record.args.items()
             }
         elif isinstance(record.args, tuple):
             record.args = tuple(
-                redact_sensitive(value, self.settings)
-                if isinstance(value, str)
-                else value
+                _redact_arg(value, self.settings)
                 for value in record.args
             )
         return True
