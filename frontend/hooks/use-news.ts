@@ -11,7 +11,8 @@ import {
   waitForJob,
   type StartedJob,
 } from "@/lib/api";
-import type { NewsData } from "@/lib/types";
+import { STORED_REPORT_STALE_MS } from "@/lib/query-policy";
+import type { NewsData, StockDashboard } from "@/lib/types";
 import { useMarketStore } from "@/stores/market";
 
 export type { NewsData } from "@/lib/types";
@@ -23,6 +24,7 @@ export function useNews(symbol: string) {
     queryFn: () => apiGet<NewsData>(`/stocks/${symbol}/news`, {}, market),
     retry: (count, error) =>
       !(error instanceof ApiError && error.status === 404) && count < 1,
+    staleTime: STORED_REPORT_STALE_MS,
   });
 }
 
@@ -42,6 +44,10 @@ export function useRunNews(symbol: string) {
     },
     onSuccess: (data) => {
       qc.setQueryData(["news", market, symbol], data);
+      qc.setQueriesData<StockDashboard>(
+        { queryKey: ["stock-dashboard", market, symbol] },
+        (current) => current ? { ...current, news: data } : current,
+      );
       qc.invalidateQueries({ queryKey: ["usage"] });
     },
   });

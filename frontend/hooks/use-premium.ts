@@ -3,6 +3,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { apiGet } from "@/lib/api";
+import { PRICE_STALE_MS } from "@/lib/query-policy";
 import type { PredictionData } from "@/lib/types";
 import { useMarketStore } from "@/stores/market";
 
@@ -48,5 +49,6 @@ export function usePredictions(symbol: string) {
     queryFn: () => apiGet<PredictionData>(`/stocks/${symbol}/predictions`, {}, market),
     enabled: !!symbol,
     retry: 1,
+    staleTime: PRICE_STALE_MS,
   });
 }

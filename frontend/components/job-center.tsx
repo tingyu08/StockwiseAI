@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 
 import {
   apiRequest,
@@ -21,6 +22,7 @@ const statusLabel: Record<JobState["status"], string> = {
 };
 
 export function JobCenter() {
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [jobs, setJobs] = useState<ActiveJob[]>([]);
   const [states, setStates] = useState<Record<number, JobState>>({});
@@ -43,6 +45,16 @@ export function JobCenter() {
               signal: controller.signal,
             });
             if (run.status === "succeeded") {
+              const match = /^sync-(tw|us)-(.+)$/.exec(job.name);
+              if (match) {
+                const [, market, symbol] = match;
+                void queryClient.invalidateQueries({
+                  queryKey: ["stock-dashboard", market, symbol],
+                });
+                void queryClient.invalidateQueries({
+                  queryKey: ["prices", market, symbol],
+                });
+              }
               removeActiveJob(job.runId);
               return;
             }
@@ -70,7 +82,7 @@ export function JobCenter() {
       controller.abort();
       window.clearInterval(timer);
     };
-  }, [jobs]);
+  }, [jobs, queryClient]);
 
   const retry = async (job: ActiveJob) => {
     await apiRequest<StartedJob>(`/jobs/runs/${job.runId}:retry`, { method: "POST" });

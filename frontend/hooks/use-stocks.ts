@@ -3,6 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiGet, apiRequest, trackActiveJob } from "@/lib/api";
+import { PRICE_STALE_MS, WATCHLIST_STALE_MS } from "@/lib/query-policy";
 import type { PriceSeries, StockInfo, WatchItem } from "@/lib/types";
 import { useMarketStore } from "@/stores/market";
 
@@ -22,6 +23,7 @@ export function usePrices(symbol: string, range: string) {
     queryFn: () =>
       apiGet<PriceSeries>(`/stocks/${symbol}/prices`, { range }, market),
     enabled: !!symbol,
+    staleTime: PRICE_STALE_MS,
   });
 }
 
@@ -39,6 +41,7 @@ export function useWatchlist() {
   return useQuery({
     queryKey: ["watchlist", market],
     queryFn: () => apiGet<WatchItem[]>("/watchlist", {}, market),
+    staleTime: WATCHLIST_STALE_MS,
   });
 }
 

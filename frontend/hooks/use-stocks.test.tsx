@@ -42,7 +42,7 @@ beforeEach(() => {
 describe("stock queries", () => {
   it("loads prices for the selected market and requested range", async () => {
     vi.mocked(apiGet).mockResolvedValue({ symbol: "2330", market: "TW", prices: [] });
-    const { wrapper } = createQueryWrapper();
+    const { queryClient, wrapper } = createQueryWrapper();
 
     renderHook(() => usePrices("2330", "1m"), { wrapper });
 
@@ -53,6 +53,9 @@ describe("stock queries", () => {
         "tw",
       ),
     );
+    expect(queryClient.getQueryCache().find({
+      queryKey: ["prices", "tw", "2330", "1m"],
+    })?.options.staleTime).toBe(5 * 60_000);
   });
 
   it("does not search for blank text and searches non-blank text", async () => {
@@ -73,13 +76,16 @@ describe("stock queries", () => {
 
   it("loads the watchlist for the selected market", async () => {
     vi.mocked(apiGet).mockResolvedValue([]);
-    const { wrapper } = createQueryWrapper();
+    const { queryClient, wrapper } = createQueryWrapper();
 
     renderHook(() => useWatchlist(), { wrapper });
 
     await waitFor(() =>
       expect(apiGet).toHaveBeenCalledWith("/watchlist", {}, "tw"),
     );
+    expect(queryClient.getQueryCache().find({
+      queryKey: ["watchlist", "tw"],
+    })?.options.staleTime).toBe(10 * 60_000);
   });
 });
 

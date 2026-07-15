@@ -3,10 +3,11 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { apiGet } from "@/lib/api";
+import { DASHBOARD_STALE_MS } from "@/lib/query-policy";
 import type { StockDashboard } from "@/lib/types";
 import { useMarketStore } from "@/stores/market";
 
-export const DASHBOARD_STALE_MS = 5 * 60_000;
+export { DASHBOARD_STALE_MS } from "@/lib/query-policy";
 
 export function useStockDashboard(symbol: string, range: string) {
   const market = useMarketStore((state) => state.market);
