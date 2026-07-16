@@ -65,6 +65,7 @@ def orders_view(market: Market, db: Session = Depends(get_db)) -> Envelope:
                 "fee": float(order.fee) if order.fee else None,
                 "status": order.status,
                 "decided_by": order.decided_by,
+                "fill_kind": order.fill_kind,
                 "reject_reason": order.reject_reason,
                 "created_at": order.created_at.isoformat() if order.created_at else None,
                 "filled_at": order.filled_at.isoformat() if order.filled_at else None,

@@ -45,6 +45,7 @@ export interface SimOrderView {
   fee: number | null;
   status: "pending" | "filled" | "rejected";
   decided_by: string;
+  fill_kind: "stop_loss" | "take_profit" | null;
   reject_reason: string | null;
   created_at: string | null;
   filled_at: string | null;

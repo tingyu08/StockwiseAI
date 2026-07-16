@@ -16,7 +16,8 @@ from sqlalchemy.orm import Session
 from app.models import AiReport, DailyPrice, SimOrder, Stock, WatchlistItem
 from app.services.sim.engine import calc_fee, get_or_create_account
 from app.services.sim.portfolio import current_positions
-from app.services.time_service import utc_now_naive
+from app.services.time_service import market_today, utc_now_naive
+from app.services.trading_calendar import last_trading_session
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +42,7 @@ def run_decisions(db: Session, market: str) -> dict:
     created: list[dict] = []
     skipped: list[dict] = []
     buy_candidates: list[tuple[float, Stock, float, AiReport]] = []
+    expected_session = _latest_session(market)
     for stock in managed:
         if _has_pending(db, account.id, stock.id):
             skipped.append({"symbol": stock.symbol, "reason": "已有待成交委託"})
@@ -48,6 +50,12 @@ def run_decisions(db: Session, market: str) -> dict:
         last_close = _last_close(db, stock.id)
         if last_close is None:
             skipped.append({"symbol": stock.symbol, "reason": "無價格資料"})
+            continue
+        # 價格新鮮度閘門：資料未更新至最新交易日 → 寧可不動作，不用舊價下單
+        if _last_price_date(db, stock.id) < expected_session:
+            skipped.append(
+                {"symbol": stock.symbol, "reason": "價格尚未更新至最新交易日，跳過決策"}
+            )
             continue
 
         held_qty = positions.get(stock.id, 0.0)
@@ -181,6 +189,11 @@ def _today_report(db: Session, stock_id: int) -> AiReport | None:
         if report:
             return report
     return None
+
+
+def _latest_session(market: str) -> date:
+    """該市場最近一個（含今日）交易日——決策資料必須新鮮到這一天。"""
+    return last_trading_session(market, market_today(market))
 
 
 def _last_price_date(db: Session, stock_id: int) -> date:

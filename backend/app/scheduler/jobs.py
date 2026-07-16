@@ -13,14 +13,31 @@ from sqlalchemy import select
 from app.core.db import SessionLocal
 from app.models import Stock, WatchlistItem
 from app.services.sync_service import sync_prices
+from app.services.time_service import market_today
+from app.services.trading_calendar import is_trading_day
 
 logger = logging.getLogger(__name__)
 
 TZ = "Asia/Taipei"
 
 
+def _non_trading_gate(market: str) -> dict | None:
+    """假日/週末閘門：非交易日整段跳過（不喚醒外部 API、不燒 AI 額度）。
+
+    US 排程於台灣清晨執行時，market_today("US") 即為剛收盤的美東日期，
+    直接以該日判斷是否為交易日即可。
+    """
+    today = market_today(market)
+    if is_trading_day(market, today):
+        return None
+    logger.info("%s %s 非交易日，排程跳過", market, today)
+    return {"market": market, "skipped": f"{today} 非交易日"}
+
+
 async def sync_market_daily(market: str) -> dict:
     """同步該市場所有自選股。單檔失敗不中斷其他檔。"""
+    if gate := _non_trading_gate(market):
+        return gate
     db = SessionLocal()
     synced, failed = 0, []
     try:
@@ -43,6 +60,8 @@ async def sync_market_daily(market: str) -> dict:
 
 async def ai_batch_daily(market: str) -> dict:
     """對該市場 AI 託管清單跑例行批次分析（flash-lite 降級鏈）。"""
+    if gate := _non_trading_gate(market):
+        return gate
     from app.services.analysis_service import run_batch
 
     db = SessionLocal()
@@ -62,6 +81,8 @@ async def ai_batch_daily(market: str) -> dict:
 
 async def overview_daily(market: str) -> dict:
     """Generate the cached four-module daily investment briefing."""
+    if gate := _non_trading_gate(market):
+        return gate
     from app.services.analysis_service import overview_dto, run_overview
 
     db = SessionLocal()
@@ -78,6 +99,8 @@ async def news_research_daily(market: str) -> dict:
     單檔失敗不中斷（agent 任務較不穩定）；額度盡即提前收工，
     已完成的摘要仍會被當日批次分析吃到。
     """
+    if gate := _non_trading_gate(market):
+        return gate
     from app.core.exceptions import QuotaExceededError
     from app.services.news_service import run_news_research
 
@@ -106,6 +129,8 @@ async def news_research_daily(market: str) -> dict:
 
 async def sim_decide_daily(market: str) -> dict:
     """以 3.5 優先的交易分析產生模擬委託單（隔日開盤成交）。"""
+    if gate := _non_trading_gate(market):
+        return gate
     from app.services.analysis_service import run_batch
     from app.services.sim.decision import run_decisions
 
@@ -128,6 +153,8 @@ async def sim_decide_daily(market: str) -> dict:
 
 async def sim_fill_daily(market: str) -> dict:
     """資料同步後撮合 pending 單。"""
+    if gate := _non_trading_gate(market):
+        return gate
     from app.services.sim.engine import fill_pending_orders
 
     db = SessionLocal()
@@ -139,6 +166,8 @@ async def sim_fill_daily(market: str) -> dict:
 
 async def nav_snapshot_daily(market: str) -> dict:
     """ETF 淨值/折溢價每日快照。"""
+    if gate := _non_trading_gate(market):
+        return gate
     from app.services.premium_service import snapshot_premiums
 
     db = SessionLocal()
@@ -150,6 +179,8 @@ async def nav_snapshot_daily(market: str) -> dict:
 
 async def alert_check_daily(market: str) -> dict:
     """價格/折溢價警示檢查（於同步與淨值快照之後）。"""
+    if gate := _non_trading_gate(market):
+        return gate
     from app.services.alert_service import check_alerts, deliver_pending_notifications
 
     db = SessionLocal()
@@ -159,6 +190,17 @@ async def alert_check_daily(market: str) -> dict:
     finally:
         db.close()
     return {**result, "notifications": notifications}
+
+
+async def exit_sentinel_job(market: str) -> dict:
+    """盤中出場哨兵：持倉的停損/停利即時檢查（零 AI 呼叫，非交易時段自動 no-op）。"""
+    from app.services.sim.sentinel import run_exit_sentinel
+
+    db = SessionLocal()
+    try:
+        return await run_exit_sentinel(db, market)
+    finally:
+        db.close()
 
 
 async def maintenance_daily() -> dict:
@@ -189,6 +231,8 @@ JOBS = {
     "sim-fill-us": lambda: sim_fill_daily("US"),
     "alerts-tw": lambda: alert_check_daily("TW"),
     "alerts-us": lambda: alert_check_daily("US"),
+    "sentinel-tw": lambda: exit_sentinel_job("TW"),
+    "sentinel-us": lambda: exit_sentinel_job("US"),
     "maintenance": maintenance_daily,
 }
 
@@ -215,6 +259,9 @@ def start_scheduler() -> AsyncIOScheduler:
     scheduler.add_job(overview_daily, CronTrigger(hour=6, minute=10, timezone=TZ), args=["US"])
     scheduler.add_job(sim_decide_daily, CronTrigger(hour=6, minute=15, timezone=TZ), args=["US"])
     scheduler.add_job(maintenance_daily, CronTrigger(hour=3, minute=15, timezone=TZ))
+    # 盤中出場哨兵（每小時；非交易日/時段由哨兵自行 no-op）
+    scheduler.add_job(exit_sentinel_job, CronTrigger(hour="9-13", minute=10, timezone=TZ), args=["TW"])
+    scheduler.add_job(exit_sentinel_job, CronTrigger(hour="21-23,0-4", minute=40, timezone=TZ), args=["US"])
     scheduler.start()
     logger.info("APScheduler started (internal mode)")
     return scheduler

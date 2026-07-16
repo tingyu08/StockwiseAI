@@ -9,6 +9,9 @@ on:
     - cron: "40 20 * * 1-5"  # 04:40 TW 次日 — 美股新聞研究（背景執行）
     - cron: "30 21 * * 1-5"  # 05:30 TW 次日 — 美股：同步→撮合→淨值→警示→AI批次→產生委託
     - cron: "15 19 * * 0"    # 每週一 03:15 TW — 清理過期 operational history
+    - cron: "10 1-5 * * 1-5"   # 09:10~13:10 TW 每小時 — 台股盤中出場哨兵（停損/停利）
+    - cron: "40 13-19 * * 1-5" # 21:40~03:40 TW 每小時 — 美股盤中出場哨兵
+    - cron: "10 20 * * 1-5"    # 04:10 TW — 美股收盤前最後一次哨兵檢查
   workflow_dispatch:
     inputs:
       job:
@@ -71,8 +74,34 @@ jobs:
             bash .github/scripts/run-job.sh "$job"
           done
 
+      - name: TW exit sentinel
+        if: github.event.schedule == '10 1-5 * * 1-5'
+        env:
+          JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
+        run: bash .github/scripts/run-job.sh sentinel-tw
+
+      - name: US exit sentinel
+        if: github.event.schedule == '40 13-19 * * 1-5' || github.event.schedule == '10 20 * * 1-5'
+        env:
+          JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
+        run: bash .github/scripts/run-job.sh sentinel-us
+
       - name: Weekly maintenance
         if: github.event.schedule == '15 19 * * 0'
         env:
           JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
         run: bash .github/scripts/run-job.sh maintenance
+
+      - name: Notify on failure
+        if: failure()
+        env:
+          NOTIFY_WEBHOOK_URL: ${{ secrets.NOTIFY_WEBHOOK_URL }}
+        run: |
+          if [ -n "$NOTIFY_WEBHOOK_URL" ]; then
+            curl -sf --max-time 20 -X POST "$NOTIFY_WEBHOOK_URL" \
+              -H "Content-Type: application/json" \
+              -d "{\"text\":\"daily-jobs 排程失敗（schedule: ${{ github.event.schedule || 'manual' }}）: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}\"}" \
+              || echo "notify webhook failed"
+          else
+            echo "NOTIFY_WEBHOOK_URL not set; skip notification"
+          fi

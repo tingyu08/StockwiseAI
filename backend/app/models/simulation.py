@@ -43,5 +43,7 @@ class SimOrder(Base):
     decided_by: Mapped[str] = mapped_column(String(4))  # 'ai' | 'user'
     ai_report_id: Mapped[int | None] = mapped_column(ForeignKey("ai_reports.id"))
     reject_reason: Mapped[str | None] = mapped_column(String(256))
+    # None=每日流程（隔日開盤成交）；stop_loss/take_profit=盤中哨兵以觀察價成交
+    fill_kind: Mapped[str | None] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     filled_at: Mapped[datetime | None] = mapped_column(DateTime)

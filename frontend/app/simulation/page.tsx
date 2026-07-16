@@ -248,6 +248,14 @@ function OrderRow({ order }: { order: SimOrderView }) {
         </span>
         <span className="font-mono font-semibold">{order.symbol}</span>
         <span className="text-neutral-500">{order.name}</span>
+        {order.fill_kind && (
+          <span
+            className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900 dark:text-amber-200"
+            title="盤中哨兵以觸發當下的觀察價成交（非隔日開盤價）"
+          >
+            {order.fill_kind === "stop_loss" ? "⚡盤中停損" : "⚡盤中停利"}
+          </span>
+        )}
         <span className="ml-auto text-neutral-500">
           {order.qty.toLocaleString()} 股
           {order.fill_price != null && ` @ ${order.fill_price}`}
