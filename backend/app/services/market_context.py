@@ -7,6 +7,7 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
+import httpx
 import pandas as pd
 import yfinance as yf
 
@@ -82,6 +83,63 @@ def _fetch_local_levels(ticker: str) -> dict | None:
     }
 
 
+TAIFEX_QUOTE_URL = "https://mis.taifex.com.tw/futures/api/getQuoteList"
+
+
+def _taifex_quotes(market_type: str) -> list[dict]:
+    """期交所 MIS 台指期報價（免費、免 key）。market_type: '0'=日盤、'1'=夜盤。"""
+    payload = {
+        "MarketType": market_type, "SymbolType": "F", "KindID": "1",
+        "CID": "TXF", "ExpireMonth": "", "RowSize": "全部",
+        "PageNo": "", "SortColumn": "", "AscDesc": "A",
+    }
+    res = httpx.post(
+        TAIFEX_QUOTE_URL, json=payload, timeout=20,
+        headers={"User-Agent": "Mozilla/5.0"},
+    )
+    res.raise_for_status()
+    return (res.json().get("RtData") or {}).get("QuoteList") or []
+
+
+def parse_night_futures(night_quotes: list[dict], day_quotes: list[dict]) -> dict | None:
+    """近月台指期：夜盤最新價 vs 日盤收盤價 → 隔夜台股定價變化。
+
+    SymbolID 尾碼 -M=夜盤、-F=日盤、-P/-S=現貨；近月＝清單中第一個有成交價的合約。
+    """
+    def first_traded(quotes: list[dict], suffix: str) -> dict | None:
+        for q in quotes:
+            symbol = q.get("SymbolID") or ""
+            if symbol.startswith("TXF") and symbol.endswith(suffix) and q.get("CLastPrice"):
+                return q
+        return None
+
+    night = first_traded(night_quotes, "-M")
+    day = first_traded(day_quotes, "-F")
+    if night is None or day is None:
+        return None
+    try:
+        night_last = float(night["CLastPrice"])
+        day_close = float(day["CLastPrice"])
+    except (TypeError, ValueError):
+        return None
+    if day_close <= 0:
+        return None
+    return {
+        "night_last": round(night_last, 0),
+        "day_close": round(day_close, 0),
+        "change_pct": round((night_last - day_close) / day_close * 100, 2),
+        "contract": (night.get("SymbolID") or "").removesuffix("-M"),
+    }
+
+
+def _fetch_tw_night_futures() -> dict | None:
+    try:
+        return parse_night_futures(_taifex_quotes("1"), _taifex_quotes("0"))
+    except Exception as exc:
+        logger.warning("TAIFEX 夜盤報價失敗：%s", exc)
+        return None
+
+
 async def build_market_context(market: str) -> str:
     """組裝市場環境文字摘要（抓不到的項目誠實標示，不讓 AI 腦補）。"""
 
@@ -108,6 +166,17 @@ async def build_market_context(market: str) -> str:
             )
         else:
             lines.append("- 資料暫缺")
+
+        if market == "TW":
+            lines.append("\n【台指期夜盤（隔夜對台股的直接定價）】")
+            night = _fetch_tw_night_futures()
+            if night:
+                lines.append(
+                    f"- 近月 {night['contract']} 夜盤最新 {night['night_last']:,.0f}"
+                    f"（較日盤收盤 {night['day_close']:,.0f} 變動 {night['change_pct']:+.2f}%）"
+                )
+            else:
+                lines.append("- 資料暫缺")
         return "\n".join(lines)
 
     return await asyncio.to_thread(_gather)

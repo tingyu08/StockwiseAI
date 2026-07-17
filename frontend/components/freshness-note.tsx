@@ -14,5 +14,5 @@ export const FRESHNESS = {
   simulation: "模擬交易：開盤前的 AI 委託以當日開盤價成交；盤中停損/停利以觸發時觀察價成交",
   compare: "報酬率：依日線資料計算，每日收盤後更新",
   backtest: "回測：使用截至最近收盤日的歷史日線",
-  overview: "AI 簡報：每交易日開盤前一份（快取），已納入隔夜美股與 ADR 動態",
+  overview: "AI 簡報：每交易日開盤前一份（快取），已納入隔夜美股、台積電 ADR 與台指期夜盤動態",
 } as const;
