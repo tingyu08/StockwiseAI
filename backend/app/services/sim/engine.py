@@ -1,25 +1,27 @@
 """模擬交易撮合引擎。
 
 規則（docs/SD.md §3）：
-- 委託單於 AI 決策時建立為 pending，於「下一個有價格的交易日」以開盤價成交
+- 委託單於 AI 決策時建立為 pending，以「決策後第一個開盤」的開盤價成交：
+  開盤前（晨間決策流程）建立的單吃當地「當天」開盤；開盤後建立的單吃下一個交易日
 - 台股費用：手續費 0.1425%（最低 20 元），賣出另課證交稅 0.3%
 - 美股費用：0（主流券商零手續費）
 - 事件溯源：orders 一經 filled/rejected 不再變更；持倉由重放推導
 """
 import logging
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from app.models import DailyPrice, SimAccount, SimOrder, Stock
 from app.services.sim.portfolio import current_positions
-from app.services.time_service import market_date_from_utc
+from app.services.time_service import MARKET_TIMEZONES
 
 logger = logging.getLogger(__name__)
 
 INITIAL_CASH = {"TW": 1_000_000.0, "US": 30_000.0}
 CURRENCY = {"TW": "TWD", "US": "USD"}
+MARKET_OPEN = {"TW": (9, 0), "US": (9, 30)}  # 當地開盤時間
 
 TW_FEE_RATE = 0.001425
 TW_FEE_MIN = 20.0
@@ -77,13 +79,22 @@ def fill_pending_orders(db: Session, market: str) -> dict:
             select(DailyPrice)
             .where(
                 DailyPrice.stock_id == stock.id,
-                DailyPrice.date > market_date_from_utc(order.created_at, market),
+                DailyPrice.date >= _earliest_fill_date(order.created_at, market),
                 DailyPrice.open.is_not(None),
             )
             .order_by(DailyPrice.date)
             .limit(1)
         ).scalar_one_or_none()
         if price_row is None:
+            # claim 是原生 UPDATE（session 內屬性仍是 'pending'），
+            # 還原必須也走 UPDATE——只改屬性會被 SQLAlchemy 視為無變更而不寫回，
+            # 訂單將永久卡在 'filling' 無法再被撮合
+            db.execute(
+                update(SimOrder)
+                .where(SimOrder.id == order.id)
+                .values(status="pending")
+                .execution_options(synchronize_session=False)
+            )
             order.status = "pending"
             waiting += 1  # 下一個交易日資料尚未同步
             continue
@@ -127,6 +138,23 @@ def fill_pending_orders(db: Session, market: str) -> dict:
 
     db.commit()
     return {"market": market, "filled": filled, "rejected": rejected, "waiting": waiting}
+
+
+def _earliest_fill_date(created_at_utc: datetime, market: str) -> date:
+    """委託可成交的最早交易日：開盤前建立 → 當地當天；開盤後建立 → 次一日。
+
+    無前視偏誤：晨間（開盤前）的決策用的是昨收＋隔夜國際盤資料，
+    成交於幾小時後的當日開盤價，等同真實世界的開盤市價單。
+    """
+    aware = (
+        created_at_utc.replace(tzinfo=timezone.utc)
+        if created_at_utc.tzinfo is None
+        else created_at_utc
+    )
+    local = aware.astimezone(MARKET_TIMEZONES[market])
+    if (local.hour, local.minute) < MARKET_OPEN[market]:
+        return local.date()
+    return local.date() + timedelta(days=1)
 
 
 def _reject(order: SimOrder, reason: str) -> None:

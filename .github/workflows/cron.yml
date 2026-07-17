@@ -1,13 +1,18 @@
 # 方案 B 排程（docs/SD.md §6.2）：Render 免費層會休眠，排程由此觸發並順便喚醒。
-# 時間為 UTC（台灣 = UTC+8）。需設定 repo secrets：BACKEND_URL、JOB_TOKEN。
+# 時間為 UTC（台灣 = UTC+8）。需設定 repo secrets：BACKEND_URL、JOB_TOKEN；選配 NOTIFY_WEBHOOK_URL。
+#
+# 設計：分析/決策＝開盤前晨間（已消化昨收＋隔夜行情），委託成交於當日開盤價；
+#       資料任務（同步/撮合/淨值/警示）＝收盤後。
+#       排程時間刻意提早——GitHub cron 常延遲 1~2 小時，提早排以確保趕在開盤前；
+#       就算延遲到開盤後，引擎會自動改吃下一個開盤價，不會有前視偏誤。
 name: daily-jobs
 
 on:
   schedule:
-    - cron: "40 5 * * 1-5"   # 13:40 TW — 台股新聞研究（背景執行）
-    - cron: "30 6 * * 1-5"   # 14:30 TW — 台股：同步→撮合→淨值→警示→AI批次→產生委託
-    - cron: "40 20 * * 1-5"  # 04:40 TW 次日 — 美股新聞研究（背景執行）
-    - cron: "30 21 * * 1-5"  # 05:30 TW 次日 — 美股：同步→撮合→淨值→警示→AI批次→產生委託
+    - cron: "10 22 * * 0-4"  # 06:10 TW 次日 — 台股晨間：新聞→AI批次→簡報→產生委託（09:00 開盤成交）
+    - cron: "30 6 * * 1-5"   # 14:30 TW — 台股收盤後：同步→撮合晨間委託→淨值→警示
+    - cron: "40 11 * * 1-5"  # 19:40 TW — 美股晨間（美東開盤前）：新聞→AI批次→簡報→產生委託（21:30 開盤成交）
+    - cron: "30 21 * * 1-5"  # 05:30 TW 次日 — 美股收盤後：同步→撮合→淨值→警示
     - cron: "15 19 * * 0"    # 每週一 03:15 TW — 清理過期 operational history
     - cron: "10 1-5 * * 1-5"   # 09:10~13:10 TW 每小時 — 台股盤中出場哨兵（停損/停利）
     - cron: "40 13-19 * * 1-5" # 21:40~03:40 TW 每小時 — 美股盤中出場哨兵
@@ -42,34 +47,42 @@ jobs:
           JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
         run: bash .github/scripts/run-job.sh "${{ inputs.job }}"
 
-      - name: TW news research
-        if: github.event.schedule == '40 5 * * 1-5'
-        env:
-          JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
-        run: bash .github/scripts/run-job.sh news-tw
-
-      - name: US news research
-        if: github.event.schedule == '40 20 * * 1-5'
-        env:
-          JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
-        run: bash .github/scripts/run-job.sh news-us
-
-      - name: TW daily sequence
-        if: github.event.schedule == '30 6 * * 1-5'
+      - name: TW pre-open sequence
+        if: github.event.schedule == '10 22 * * 0-4'
         env:
           JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
         run: |
-          for job in news-tw sync-tw sim-fill-tw nav-tw alerts-tw ai-batch-tw overview-tw sim-decide-tw; do
+          for job in news-tw ai-batch-tw overview-tw sim-decide-tw; do
             echo "== $job =="
             bash .github/scripts/run-job.sh "$job"
           done
 
-      - name: US daily sequence
+      - name: TW post-close sequence
+        if: github.event.schedule == '30 6 * * 1-5'
+        env:
+          JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
+        run: |
+          for job in sync-tw sim-fill-tw nav-tw alerts-tw; do
+            echo "== $job =="
+            bash .github/scripts/run-job.sh "$job"
+          done
+
+      - name: US pre-open sequence
+        if: github.event.schedule == '40 11 * * 1-5'
+        env:
+          JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
+        run: |
+          for job in news-us ai-batch-us overview-us sim-decide-us; do
+            echo "== $job =="
+            bash .github/scripts/run-job.sh "$job"
+          done
+
+      - name: US post-close sequence
         if: github.event.schedule == '30 21 * * 1-5'
         env:
           JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
         run: |
-          for job in news-us sync-us sim-fill-us nav-us alerts-us ai-batch-us overview-us sim-decide-us; do
+          for job in sync-us sim-fill-us nav-us alerts-us; do
             echo "== $job =="
             bash .github/scripts/run-job.sh "$job"
           done

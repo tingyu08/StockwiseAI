@@ -239,25 +239,29 @@ JOBS = {
 
 def start_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=TZ)
-    # 台股：13:40 新聞研究（不依賴行情，先跑）→ 14:30 同步 → 14:35 撮合昨日委託
-    #       → 14:45 淨值 → 15:00 AI 批次（含新聞面）→ 15:15 產生委託
-    scheduler.add_job(news_research_daily, CronTrigger(hour=13, minute=40, timezone=TZ), args=["TW"])
+    # 分析/決策＝開盤前晨間（已消化昨收＋隔夜美股/國際盤）；成交於當日開盤價。
+    # 資料任務（同步/撮合/淨值/警示）＝收盤後。
+    #
+    # 台股晨間：06:10 新聞 → 06:40 AI 批次 → 06:55 簡報 → 07:10 產生委託（09:00 開盤成交）
+    scheduler.add_job(news_research_daily, CronTrigger(hour=6, minute=10, timezone=TZ), args=["TW"])
+    scheduler.add_job(ai_batch_daily, CronTrigger(hour=6, minute=40, timezone=TZ), args=["TW"])
+    scheduler.add_job(overview_daily, CronTrigger(hour=6, minute=55, timezone=TZ), args=["TW"])
+    scheduler.add_job(sim_decide_daily, CronTrigger(hour=7, minute=10, timezone=TZ), args=["TW"])
+    # 台股收盤後：14:30 同步 → 14:35 撮合晨間委託（記入今日開盤價）→ 14:45 淨值 → 14:50 警示
     scheduler.add_job(sync_market_daily, CronTrigger(hour=14, minute=30, timezone=TZ), args=["TW"])
     scheduler.add_job(sim_fill_daily, CronTrigger(hour=14, minute=35, timezone=TZ), args=["TW"])
     scheduler.add_job(nav_snapshot_daily, CronTrigger(hour=14, minute=45, timezone=TZ), args=["TW"])
     scheduler.add_job(alert_check_daily, CronTrigger(hour=14, minute=50, timezone=TZ), args=["TW"])
-    scheduler.add_job(ai_batch_daily, CronTrigger(hour=15, minute=0, timezone=TZ), args=["TW"])
-    scheduler.add_job(overview_daily, CronTrigger(hour=15, minute=10, timezone=TZ), args=["TW"])
-    scheduler.add_job(sim_decide_daily, CronTrigger(hour=15, minute=15, timezone=TZ), args=["TW"])
-    # 美股（台灣時間清晨）：同樣序列，新聞研究 04:40 先跑
-    scheduler.add_job(news_research_daily, CronTrigger(hour=4, minute=40, timezone=TZ), args=["US"])
+    # 美股晨間（美東開盤前，台灣時間晚上）：19:40 新聞 → 20:10 批次 → 20:25 簡報 → 20:40 委託（21:30 開盤成交）
+    scheduler.add_job(news_research_daily, CronTrigger(hour=19, minute=40, timezone=TZ), args=["US"])
+    scheduler.add_job(ai_batch_daily, CronTrigger(hour=20, minute=10, timezone=TZ), args=["US"])
+    scheduler.add_job(overview_daily, CronTrigger(hour=20, minute=25, timezone=TZ), args=["US"])
+    scheduler.add_job(sim_decide_daily, CronTrigger(hour=20, minute=40, timezone=TZ), args=["US"])
+    # 美股收盤後（台灣清晨）：05:30 同步 → 05:35 撮合 → 05:45 淨值 → 05:50 警示
     scheduler.add_job(sync_market_daily, CronTrigger(hour=5, minute=30, timezone=TZ), args=["US"])
     scheduler.add_job(sim_fill_daily, CronTrigger(hour=5, minute=35, timezone=TZ), args=["US"])
     scheduler.add_job(nav_snapshot_daily, CronTrigger(hour=5, minute=45, timezone=TZ), args=["US"])
     scheduler.add_job(alert_check_daily, CronTrigger(hour=5, minute=50, timezone=TZ), args=["US"])
-    scheduler.add_job(ai_batch_daily, CronTrigger(hour=6, minute=0, timezone=TZ), args=["US"])
-    scheduler.add_job(overview_daily, CronTrigger(hour=6, minute=10, timezone=TZ), args=["US"])
-    scheduler.add_job(sim_decide_daily, CronTrigger(hour=6, minute=15, timezone=TZ), args=["US"])
     scheduler.add_job(maintenance_daily, CronTrigger(hour=3, minute=15, timezone=TZ))
     # 盤中出場哨兵（每小時；非交易日/時段由哨兵自行 no-op）
     scheduler.add_job(exit_sentinel_job, CronTrigger(hour="9-13", minute=10, timezone=TZ), args=["TW"])

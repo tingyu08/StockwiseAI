@@ -1,10 +1,12 @@
 """盤中出場哨兵與交易日/新鮮度閘門的測試。"""
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
+from sqlalchemy import select
 
 from app.core.db import SessionLocal
-from app.models import SimOrder
+from app.models import DailyPrice, SimOrder
 from app.services.sim.decision import run_decisions
 from app.services.sim.engine import calc_fee, get_or_create_account
 from app.services.sim.portfolio import current_positions
@@ -136,6 +138,95 @@ def test_calendar_known_dates():
     # 週日 → 回推到最近的週五
     assert last_trading_session("TW", date(2026, 7, 12)) == date(2026, 7, 10)
     assert last_trading_session("US", date(2026, 7, 15)) == date(2026, 7, 15)
+
+
+# ---- 開盤前決策 → 當日開盤成交（引擎語意）----
+
+def test_pre_open_order_fills_at_same_day_open(client):
+    from app.services.sim.engine import fill_pending_orders
+
+    db = SessionLocal()
+    try:
+        stock = _seed_stock(db, "9301")
+        account = get_or_create_account(db, "TW")
+        last_price = db.execute(
+            select(DailyPrice)
+            .where(DailyPrice.stock_id == stock.id)
+            .order_by(DailyPrice.date.desc())
+            .limit(1)
+        ).scalar_one()
+        # 委託建立於「最後價格日」台灣時間 07:30（開盤前）→ 應吃同一天的開盤價
+        pre_open_local = datetime(
+            last_price.date.year, last_price.date.month, last_price.date.day,
+            7, 30, tzinfo=ZoneInfo("Asia/Taipei"),
+        )
+        order = SimOrder(
+            account_id=account.id, stock_id=stock.id, side="buy", qty=10,
+            status="pending", decided_by="ai",
+            created_at=pre_open_local.astimezone(timezone.utc).replace(tzinfo=None),
+        )
+        db.add(order)
+        db.commit()
+
+        result = fill_pending_orders(db, "TW")
+
+        db.refresh(order)
+        assert result["filled"] >= 1
+        assert order.status == "filled"
+        assert float(order.fill_price) == float(last_price.open)  # 當日開盤，非隔日
+    finally:
+        db.close()
+
+
+def test_post_open_order_waits_for_next_session(client):
+    from app.services.sim.engine import fill_pending_orders
+
+    db = SessionLocal()
+    try:
+        stock = _seed_stock(db, "9302")
+        account = get_or_create_account(db, "TW")
+        last_price = db.execute(
+            select(DailyPrice)
+            .where(DailyPrice.stock_id == stock.id)
+            .order_by(DailyPrice.date.desc())
+            .limit(1)
+        ).scalar_one()
+        # 委託建立於「最後價格日」15:00（開盤後）→ 需要下一交易日資料，只能等待
+        post_open_local = datetime(
+            last_price.date.year, last_price.date.month, last_price.date.day,
+            15, 0, tzinfo=ZoneInfo("Asia/Taipei"),
+        )
+        order = SimOrder(
+            account_id=account.id, stock_id=stock.id, side="buy", qty=10,
+            status="pending", decided_by="ai",
+            created_at=post_open_local.astimezone(timezone.utc).replace(tzinfo=None),
+        )
+        db.add(order)
+        db.commit()
+
+        fill_pending_orders(db, "TW")
+
+        db.refresh(order)
+        assert order.status == "pending"  # 最後價格日之後沒有資料 → 等待
+    finally:
+        db.close()
+
+
+# ---- 已收盤 session 判定（晨間決策的新鮮度基準）----
+
+def test_latest_session_pre_open_uses_previous_session():
+    from app.services.sim.decision import _latest_session
+
+    tw = ZoneInfo("Asia/Taipei")
+    # 2026-07-15（週三）07:30 開盤前 → 已收盤 session 是 07-14（週二）
+    pre_open = datetime(2026, 7, 15, 7, 30, tzinfo=tw).astimezone(timezone.utc)
+    assert _latest_session("TW", pre_open) == date(2026, 7, 14)
+    # 同日 14:30 收盤後 → 07-15
+    post_close = datetime(2026, 7, 15, 14, 30, tzinfo=tw).astimezone(timezone.utc)
+    assert _latest_session("TW", post_close) == date(2026, 7, 15)
+    # 週一 07:30 → 上週五
+    monday = datetime(2026, 7, 13, 7, 30, tzinfo=tw).astimezone(timezone.utc)
+    assert _latest_session("TW", monday) == date(2026, 7, 10)
 
 
 # ---- 決策端價格新鮮度閘門 ----

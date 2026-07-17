@@ -93,7 +93,7 @@ cd ../frontend && npm run test:coverage && npm run lint && npm run build
 | 後端 API | Render Free | `render.yaml` blueprint；`ENVIRONMENT=production`、`SCHEDULER_MODE=external`；migration 併入 start command（單 instance 限定） |
 | 資料庫 | Neon PostgreSQL Free | `DATABASE_URL` 於 Render dashboard 設定；連線池 `pool_recycle=300` 讓 DB 可休眠以守住 100 CU-hours/月 |
 | 前端 | Vercel | 網域填入 Render 的 `CORS_ORIGINS` |
-| 排程 | GitHub Actions cron | 平日台股 14:30／美股 05:30（台灣時間）依序執行：新聞→同步→撮合→淨值→警示→AI 批次→總評→產生委託；每週日清理維護；secrets：`BACKEND_URL`、`JOB_TOKEN` |
+| 排程 | GitHub Actions cron | **開盤前晨間**（台股 06:10／美股 19:40 台灣時間）：新聞→AI 批次→簡報→產生委託，委託於當日開盤價成交（已消化昨收＋隔夜國際盤）；**收盤後**（台股 14:30／美股 05:30）：同步→撮合→淨值→警示；盤中每小時出場哨兵（停損/停利）；每週日清理維護；secrets：`BACKEND_URL`、`JOB_TOKEN`、選配 `NOTIFY_WEBHOOK_URL` |
 
 已知限制：Render Free 冷啟動（閒置 15 分鐘休眠，喚醒約 30~60 秒）；排程有 8 次重試喚醒。
 未來若要免冷啟動可遷 Zeabur（方案 C，$5/月），評估見 [docs/SD.md §6](docs/SD.md)。

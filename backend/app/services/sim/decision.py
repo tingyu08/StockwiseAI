@@ -8,7 +8,7 @@
 """
 import json
 import logging
-from datetime import date
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 from app.models import AiReport, DailyPrice, SimOrder, Stock, WatchlistItem
 from app.services.sim.engine import calc_fee, get_or_create_account
 from app.services.sim.portfolio import current_positions
-from app.services.time_service import market_today, utc_now_naive
+from app.services.time_service import utc_now_naive
 from app.services.trading_calendar import last_trading_session
 
 logger = logging.getLogger(__name__)
@@ -191,9 +191,28 @@ def _today_report(db: Session, stock_id: int) -> AiReport | None:
     return None
 
 
-def _latest_session(market: str) -> date:
-    """該市場最近一個（含今日）交易日——決策資料必須新鮮到這一天。"""
-    return last_trading_session(market, market_today(market))
+MARKET_CLOSE = {"TW": (13, 30), "US": (16, 0)}  # 當地收盤時間
+
+
+def _latest_session(market: str, now: datetime | None = None) -> date:
+    """最近一個「已收盤」的交易日——決策資料必須新鮮到這一天。
+
+    晨間（開盤前）決策：今天還沒收盤 → 要求資料到昨天的 session；
+    收盤後決策：要求資料到今天。
+    """
+    from datetime import timezone
+
+    from app.services.time_service import MARKET_TIMEZONES
+
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=timezone.utc)
+    local = now.astimezone(MARKET_TIMEZONES[market])
+    today = local.date()
+    session = last_trading_session(market, today)
+    if session == today and (local.hour, local.minute) < MARKET_CLOSE[market]:
+        return last_trading_session(market, today - timedelta(days=1))
+    return session
 
 
 def _last_price_date(db: Session, stock_id: int) -> date:
