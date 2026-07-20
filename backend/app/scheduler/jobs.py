@@ -237,18 +237,27 @@ JOBS = {
 }
 
 
+def _enqueue_sentinel(name: str) -> None:
+    """內部排程也走 JobRun 佇列：執行紀錄進「工作中心」，且與 GH 備援共用
+    idempotency key（scheduled:{name}）——兩邊同時觸發只會實跑一次。"""
+    from app.services.job_service import enqueue_job
+
+    enqueue_job(name, job_type="scheduled", payload={"name": name},
+                idempotency_key=f"scheduled:{name}")
+
+
 def start_sentinel_scheduler() -> AsyncIOScheduler:
     """external 模式專用：只排「盤中出場哨兵」。
 
     每日大序列仍由 GitHub Actions 觸發（延遲無害），但哨兵需要分鐘級準時，
     GH cron 的 1~2 小時延遲會讓每小時巡邏名存實亡——改由後端自己的時鐘執行。
     前提：盤中需以外部 uptime ping（如 UptimeRobot 打 /health/live）保持
-    Render 清醒；GH 的哨兵 cron 保留作備援（防重複下單索引保證雙跑無害）。
+    Render 清醒；GH 的哨兵 cron 保留作備援（idempotency＋防重複下單索引雙保險）。
     """
     scheduler = AsyncIOScheduler(timezone=TZ)
-    scheduler.add_job(exit_sentinel_job, CronTrigger(hour="9-13", minute=10, timezone=TZ), args=["TW"])
-    scheduler.add_job(exit_sentinel_job, CronTrigger(hour="21-23,0-3", minute=40, timezone=TZ), args=["US"])
-    scheduler.add_job(exit_sentinel_job, CronTrigger(hour=3, minute=55, timezone=TZ), args=["US"])
+    scheduler.add_job(_enqueue_sentinel, CronTrigger(hour="9-13", minute=10, timezone=TZ), args=["sentinel-tw"])
+    scheduler.add_job(_enqueue_sentinel, CronTrigger(hour="21-23,0-3", minute=40, timezone=TZ), args=["sentinel-us"])
+    scheduler.add_job(_enqueue_sentinel, CronTrigger(hour=3, minute=55, timezone=TZ), args=["sentinel-us"])
     scheduler.start()
     logger.info("Sentinel-only APScheduler started (external mode)")
     return scheduler

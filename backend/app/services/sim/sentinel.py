@@ -48,6 +48,7 @@ async def run_exit_sentinel(db: Session, market: str) -> dict:
     )
 
     exits: list[dict] = []
+    unpriced: list[str] = []
     for stock_id, qty in positions.items():
         stock = stocks.get(stock_id)
         if stock is None:
@@ -55,6 +56,7 @@ async def run_exit_sentinel(db: Session, market: str) -> dict:
         quote = quotes.get(stock.symbol)
         if quote is None:
             logger.info("sentinel %s：無報價，本輪跳過", stock.symbol)
+            unpriced.append(stock.symbol)
             continue
         stop, target, report_id = _entry_exit_levels(db, account.id, stock_id)
 
@@ -82,7 +84,13 @@ async def run_exit_sentinel(db: Session, market: str) -> dict:
             market, stock.symbol, qty, quote, fill_kind,
         )
 
-    return {"market": market, "checked": len(positions), "exits": exits}
+    return {
+        "market": market,
+        "checked": len(positions),
+        "exits": exits,
+        # 有持倉但當輪拿不到可成交價的標的（跌停鎖死/暫停交易等），供工作中心檢視
+        "unpriced": unpriced,
+    }
 
 
 def _fill_exit(

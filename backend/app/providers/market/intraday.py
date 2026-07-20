@@ -41,9 +41,18 @@ async def _tw_quotes(symbols: list[str]) -> dict[str, float]:
     quotes: dict[str, float] = {}
     for row in body.get("msgArray", []):
         symbol = row.get("c")
+        if not symbol:
+            continue
+        # z=最新成交價；無成交時退最佳買價 b（哨兵只做賣出，買價即可成交價）。
+        # 兩者皆空＝當下賣不掉（如跌停鎖死買盤空），跳過是「擬真」的正確行為。
         price = _parse_price(row.get("z")) or _parse_price(row.get("b"))
-        if symbol and price:
+        if price:
             quotes[symbol] = price
+        else:
+            logger.info(
+                "TWSE 盤中無可成交價 %s：z=%r b=%r a=%r t=%r（可能跌停鎖死/暫停交易）",
+                symbol, row.get("z"), row.get("b"), row.get("a"), row.get("t"),
+            )
     return quotes
 
 
