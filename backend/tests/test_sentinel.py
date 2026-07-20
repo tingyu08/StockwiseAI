@@ -129,6 +129,13 @@ async def test_sentinel_noop_on_non_trading_day(client, monkeypatch):
         db.close()
 
 
+# ---- 健康檢查需支援 HEAD（uptime 監測服務的預設探測方法）----
+
+def test_health_endpoints_accept_head(client):
+    assert client.head("/api/v1/health/live").status_code == 200
+    assert client.head("/api/v1/health").status_code == 200
+
+
 # ---- external 模式的哨兵專用排程器 ----
 
 async def test_sentinel_scheduler_registers_only_sentinels():

@@ -15,12 +15,13 @@ class ReadinessError(AppError):
     status_code = 503
 
 
-@router.get("/health", response_model=Envelope)
+@router.api_route("/health", methods=["GET", "HEAD"], response_model=Envelope)
 def health() -> Envelope:
     return ok({"status": "ok"})
 
 
-@router.get("/health/live", response_model=Envelope)
+# UptimeRobot 等監測服務預設用 HEAD 探測，需一併支援（否則 405 → 誤判 Down）
+@router.api_route("/health/live", methods=["GET", "HEAD"], response_model=Envelope)
 def liveness() -> Envelope:
     return ok({"status": "alive"})
 
