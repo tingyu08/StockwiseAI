@@ -238,8 +238,9 @@ JOBS = {
 
 
 def _enqueue_sentinel(name: str) -> None:
-    """內部排程也走 JobRun 佇列：執行紀錄進「工作中心」，且與 GH 備援共用
-    idempotency key（scheduled:{name}）——兩邊同時觸發只會實跑一次。"""
+    """內部排程也走 JobRun 佇列：執行紀錄進「工作中心」。
+    idempotency key（scheduled:{name}）防同名工作排隊中重複入列
+    （也涵蓋任何手動/外部觸發撞上內部排程的情況）。"""
     from app.services.job_service import enqueue_job
 
     enqueue_job(name, job_type="scheduled", payload={"name": name},
@@ -252,7 +253,8 @@ def start_sentinel_scheduler() -> AsyncIOScheduler:
     每日大序列仍由 GitHub Actions 觸發（延遲無害），但哨兵需要分鐘級準時，
     GH cron 的 1~2 小時延遲會讓每小時巡邏名存實亡——改由後端自己的時鐘執行。
     前提：盤中需以外部 uptime ping（如 UptimeRobot 打 /health/live）保持
-    Render 清醒；GH 的哨兵 cron 保留作備援（idempotency＋防重複下單索引雙保險）。
+    Render 清醒。哨兵僅由此觸發（GH 的哨兵 cron 已移除——延遲 1~2 小時
+    的備援幾乎無實益，徒增噪音）。
     """
     scheduler = AsyncIOScheduler(timezone=TZ)
     scheduler.add_job(_enqueue_sentinel, CronTrigger(hour="9-13", minute=10, timezone=TZ), args=["sentinel-tw"])

@@ -14,9 +14,8 @@ on:
     - cron: "40 11 * * 1-5"  # 19:40 TW — 美股晨間（美東開盤前）：新聞→AI批次→簡報→產生委託（21:30 開盤成交）
     - cron: "30 21 * * 1-5"  # 05:30 TW 次日 — 美股收盤後：同步→撮合→淨值→警示
     - cron: "15 19 * * 0"    # 每週一 03:15 TW — 清理過期 operational history
-    - cron: "10 1-5 * * 1-5"   # 09:10~13:10 TW 每小時 — 台股盤中出場哨兵（停損/停利）
-    - cron: "40 13-19 * * 1-5" # 21:40~03:40 TW 每小時 — 美股盤中出場哨兵
-    - cron: "10 20 * * 1-5"    # 04:10 TW — 美股收盤前最後一次哨兵檢查
+    # 盤中哨兵不在此處：需分鐘級準時，由後端 APScheduler 執行
+    # （external 模式 + UptimeRobot keep-alive，見 backend/app/scheduler/jobs.py）
   workflow_dispatch:
     inputs:
       job:
@@ -86,18 +85,6 @@ jobs:
             echo "== $job =="
             bash .github/scripts/run-job.sh "$job"
           done
-
-      - name: TW exit sentinel
-        if: github.event.schedule == '10 1-5 * * 1-5'
-        env:
-          JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
-        run: bash .github/scripts/run-job.sh sentinel-tw
-
-      - name: US exit sentinel
-        if: github.event.schedule == '40 13-19 * * 1-5' || github.event.schedule == '10 20 * * 1-5'
-        env:
-          JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
-        run: bash .github/scripts/run-job.sh sentinel-us
 
       - name: Weekly maintenance
         if: github.event.schedule == '15 19 * * 0'
