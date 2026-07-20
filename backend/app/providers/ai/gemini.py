@@ -347,6 +347,13 @@ class GeminiProvider(AIProvider):
         generation_config: dict = {
             "responseMimeType": "application/json",
             "responseSchema": _to_gemini_schema(output_model.model_json_schema()),
+            # 明確開啟推理（-1 = 動態預算，模型視難度決定想多深）。
+            # flash-lite 系列預設不推理，不指定就會零推理跑批次分析；
+            # 配額按請求數計，推理 token 不另外扣 RPD，代價只有延遲。
+            "thinkingConfig": {"thinkingBudget": -1},
+            # 分析要可重現、少發散：低溫 + 固定 topP
+            "temperature": 0.2,
+            "topP": 0.9,
         }
 
         body: dict = {
