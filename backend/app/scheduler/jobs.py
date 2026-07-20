@@ -237,6 +237,23 @@ JOBS = {
 }
 
 
+def start_sentinel_scheduler() -> AsyncIOScheduler:
+    """external 模式專用：只排「盤中出場哨兵」。
+
+    每日大序列仍由 GitHub Actions 觸發（延遲無害），但哨兵需要分鐘級準時，
+    GH cron 的 1~2 小時延遲會讓每小時巡邏名存實亡——改由後端自己的時鐘執行。
+    前提：盤中需以外部 uptime ping（如 UptimeRobot 打 /health/live）保持
+    Render 清醒；GH 的哨兵 cron 保留作備援（防重複下單索引保證雙跑無害）。
+    """
+    scheduler = AsyncIOScheduler(timezone=TZ)
+    scheduler.add_job(exit_sentinel_job, CronTrigger(hour="9-13", minute=10, timezone=TZ), args=["TW"])
+    scheduler.add_job(exit_sentinel_job, CronTrigger(hour="21-23,0-3", minute=40, timezone=TZ), args=["US"])
+    scheduler.add_job(exit_sentinel_job, CronTrigger(hour=3, minute=55, timezone=TZ), args=["US"])
+    scheduler.start()
+    logger.info("Sentinel-only APScheduler started (external mode)")
+    return scheduler
+
+
 def start_scheduler() -> AsyncIOScheduler:
     scheduler = AsyncIOScheduler(timezone=TZ)
     # 分析/決策＝開盤前晨間（已消化昨收＋隔夜美股/國際盤）；成交於當日開盤價。

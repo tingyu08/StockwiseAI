@@ -41,12 +41,16 @@ async def add_security_headers(request: Request, call_next):
 async def lifespan(app: FastAPI):
     from app.services.job_service import run_worker_loop
 
-    scheduler = None
     worker_task = asyncio.create_task(run_worker_loop())
     if get_settings().scheduler_mode == "internal":
         from app.scheduler.jobs import start_scheduler
 
         scheduler = start_scheduler()
+    else:
+        # external：每日序列交給 GitHub Actions，但哨兵需分鐘級準時 → 後端自排
+        from app.scheduler.jobs import start_sentinel_scheduler
+
+        scheduler = start_sentinel_scheduler()
     yield
     worker_task.cancel()
     with suppress(asyncio.CancelledError):

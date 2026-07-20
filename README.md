@@ -95,5 +95,11 @@ cd ../frontend && npm run test:coverage && npm run lint && npm run build
 | 前端 | Vercel | 網域填入 Render 的 `CORS_ORIGINS` |
 | 排程 | GitHub Actions cron | **開盤前晨間**（台股 06:10／美股 19:40 台灣時間）：新聞→AI 批次→簡報→產生委託，委託於當日開盤價成交（已消化昨收＋隔夜國際盤）；**收盤後**（台股 14:30／美股 05:30）：同步→撮合→淨值→警示；盤中每小時出場哨兵（停損/停利）；每週日清理維護；secrets：`BACKEND_URL`、`JOB_TOKEN`、選配 `NOTIFY_WEBHOOK_URL` |
 
+**盤中哨兵的準時性**：GH cron 延遲 1~2 小時，對每日序列無害（緩衝已預留），但會讓每小時
+哨兵名存實亡。因此哨兵改由後端 APScheduler 自排（external 模式也啟用，分鐘級準時），
+GH 哨兵 cron 降為備援。**需設定免費 uptime 監測**（如 UptimeRobot）每 5 分鐘 ping
+`{BACKEND_URL}/api/v1/health/live`，讓 Render 盤中保持清醒（750 免費時數足夠 24/7；
+/health/live 不碰 DB，Neon 照常休眠）。
+
 已知限制：Render Free 冷啟動（閒置 15 分鐘休眠，喚醒約 30~60 秒）；排程有 8 次重試喚醒。
 未來若要免冷啟動可遷 Zeabur（方案 C，$5/月），評估見 [docs/SD.md §6](docs/SD.md)。

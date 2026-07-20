@@ -129,6 +129,20 @@ async def test_sentinel_noop_on_non_trading_day(client, monkeypatch):
         db.close()
 
 
+# ---- external 模式的哨兵專用排程器 ----
+
+async def test_sentinel_scheduler_registers_only_sentinels():
+    from app.scheduler.jobs import start_sentinel_scheduler
+
+    scheduler = start_sentinel_scheduler()
+    try:
+        jobs = scheduler.get_jobs()
+        assert len(jobs) == 3  # TW 每小時、US 每小時、US 收盤前最後一巡
+        assert all(job.func.__name__ == "exit_sentinel_job" for job in jobs)
+    finally:
+        scheduler.shutdown(wait=False)
+
+
 # ---- 交易日曆 ----
 
 def test_calendar_known_dates():
