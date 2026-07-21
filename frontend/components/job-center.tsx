@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 
 import {
@@ -26,6 +26,18 @@ export function JobCenter() {
   const [open, setOpen] = useState(false);
   const [jobs, setJobs] = useState<ActiveJob[]>([]);
   const [states, setStates] = useState<Record<number, JobState>>({});
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onPointerDown = (e: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [open]);
 
   useEffect(() => {
     const restore = () => setJobs(listActiveJobs());
@@ -93,7 +105,7 @@ export function JobCenter() {
   };
 
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef}>
       <button
         type="button"
         aria-label={`工作 ${jobs.length}`}

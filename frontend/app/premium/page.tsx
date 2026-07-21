@@ -14,6 +14,7 @@ import {
 
 import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import { usePremiumHistory, usePremiumList } from "@/hooks/use-premium";
+import { TOOLTIP_CONTENT_STYLE, TOOLTIP_LABEL_STYLE } from "@/lib/chart-theme";
 import { useMarketStore } from "@/stores/market";
 
 export default function PremiumPage() {
@@ -91,7 +92,8 @@ export default function PremiumPage() {
               <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={40} />
               <YAxis tick={{ fontSize: 11 }} width={48} tickFormatter={(v) => `${v}%`} />
               <Tooltip
-                contentStyle={{ fontSize: 12 }}
+                contentStyle={TOOLTIP_CONTENT_STYLE}
+                labelStyle={TOOLTIP_LABEL_STYLE}
                 formatter={(v) => (typeof v === "number" ? `${v.toFixed(2)}%` : String(v))}
               />
               <ReferenceLine y={0} stroke="#737373" strokeDasharray="4 4" />

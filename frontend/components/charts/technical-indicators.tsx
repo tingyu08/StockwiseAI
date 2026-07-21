@@ -11,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 
+import { TOOLTIP_CONTENT_STYLE, TOOLTIP_LABEL_STYLE } from "@/lib/chart-theme";
 import type { PricePoint } from "@/lib/types";
 
 export function TechnicalIndicatorsChart({ data }: { data: PricePoint[] }) {
@@ -23,7 +24,7 @@ export function TechnicalIndicatorsChart({ data }: { data: PricePoint[] }) {
             <CartesianGrid strokeOpacity={0.12} vertical={false} />
             <XAxis dataKey="date" tick={{ fontSize: 10 }} minTickGap={45} />
             <YAxis domain={[0, 100]} width={32} tick={{ fontSize: 10 }} />
-            <Tooltip contentStyle={{ fontSize: 11 }} />
+            <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} />
             <ReferenceLine y={70} stroke="#ef4444" strokeDasharray="3 3" />
             <ReferenceLine y={30} stroke="#22c55e" strokeDasharray="3 3" />
             <Line dataKey="rsi14" name="RSI14" stroke="#a855f7" dot={false} />
@@ -39,7 +40,7 @@ export function TechnicalIndicatorsChart({ data }: { data: PricePoint[] }) {
             <CartesianGrid strokeOpacity={0.12} vertical={false} />
             <XAxis dataKey="date" tick={{ fontSize: 10 }} minTickGap={45} />
             <YAxis width={42} tick={{ fontSize: 10 }} />
-            <Tooltip contentStyle={{ fontSize: 11 }} />
+            <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} />
             <ReferenceLine y={0} stroke="#737373" />
             <Line dataKey="macd" name="MACD" stroke="#ef4444" dot={false} />
             <Line dataKey="macd_signal" name="Signal" stroke="#3b82f6" dot={false} />

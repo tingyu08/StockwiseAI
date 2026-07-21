@@ -93,7 +93,6 @@ export default function StockPage({
       <ReportCard
         symbol={symbol}
         data={data?.analysis ?? null}
-        usage={data?.usage ?? []}
         isLoading={isLoading}
       />
       <NewsCard

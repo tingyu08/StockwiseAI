@@ -338,11 +338,6 @@ function SortableRow({
       <Link href={`/stock/${item.symbol}?market=${market}`} className="flex-1 text-sm hover:underline">
         <span className="font-mono font-semibold">{item.symbol}</span>
         <span className="ml-2 text-neutral-500">{item.name}</span>
-        {item.ai_managed && (
-          <span className="ml-2 rounded bg-blue-100 px-1.5 py-0.5 text-xs text-blue-700 dark:bg-blue-900 dark:text-blue-200">
-            AI 託管中
-          </span>
-        )}
       </Link>
       <button
         onClick={onRemove}

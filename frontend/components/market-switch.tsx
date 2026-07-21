@@ -23,6 +23,11 @@ export function MarketSwitch() {
 
   const handleChange = (next: Market) => {
     setMarket(next);
+    // 個股頁的代號屬於單一市場，切換市場後導回儀表板（避免停在他市場的個股）
+    if (pathname.startsWith("/stock/")) {
+      router.push(`/?market=${next}`);
+      return;
+    }
     const params = new URLSearchParams(searchParams.toString());
     params.set("market", next);
     router.replace(`${pathname}?${params.toString()}`);

@@ -1,11 +1,8 @@
 "use client";
 
 import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
-import {
-  useRunDeep,
-  useRunRoutine,
-} from "@/hooks/use-analysis";
-import type { AnalysisData, UsageRow } from "@/lib/types";
+import { useRunRoutine } from "@/hooks/use-analysis";
+import type { AnalysisData } from "@/lib/types";
 
 const ACTION_STYLE: Record<string, { label: string; cls: string }> = {
   buy: { label: "買進", cls: "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200" },
@@ -18,42 +15,25 @@ const SCENARIO_LABEL = { bull: "樂觀", base: "中性", bear: "悲觀" } as con
 interface ReportCardProps {
   symbol: string;
   data: AnalysisData | null;
-  usage: UsageRow[];
   isLoading: boolean;
 }
 
-export function ReportCard({ symbol, data, usage, isLoading }: ReportCardProps) {
+export function ReportCard({ symbol, data, isLoading }: ReportCardProps) {
   const routine = useRunRoutine(symbol);
-  const deep = useRunDeep(symbol);
 
-  const deepRemaining =
-    usage.find((u) => u.model === "gemini-3.5-flash")?.remaining ?? null;
   const noReport = data === null;
-  const pending = routine.isPending || deep.isPending;
 
   return (
     <section className="rounded-xl border border-neutral-200 p-5 dark:border-neutral-800">
       <div className="mb-3 flex items-center justify-between">
         <h3 className="text-lg font-semibold">🤖 AI 分析</h3>
-        <div className="flex gap-2">
-          <button
-            onClick={() => routine.mutate()}
-            disabled={pending}
-            className="rounded-md border border-neutral-300 px-3 py-1 text-xs hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800"
-          >
-            {routine.isPending ? "分析中…" : "產生分析"}
-          </button>
-          <button
-            onClick={() => deep.mutate()}
-            disabled={pending || deepRemaining === 0}
-            title={deepRemaining === 0 ? "今日深度分析額度已用盡，明日恢復" : ""}
-            className="rounded-md bg-neutral-900 px-3 py-1 text-xs text-white disabled:opacity-40 dark:bg-white dark:text-neutral-900"
-          >
-            {deep.isPending
-              ? "深度分析中…"
-              : `深度分析${deepRemaining != null ? `（今日剩 ${deepRemaining}）` : ""}`}
-          </button>
-        </div>
+        <button
+          onClick={() => routine.mutate()}
+          disabled={routine.isPending}
+          className="rounded-md border border-neutral-300 px-3 py-1 text-xs hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800"
+        >
+          {routine.isPending ? "分析中…" : "產生分析"}
+        </button>
       </div>
 
       {isLoading && <p className="text-sm text-neutral-500">載入分析中…</p>}
@@ -62,9 +42,9 @@ export function ReportCard({ symbol, data, usage, isLoading }: ReportCardProps) 
           尚無當日分析報告，點右上「產生分析」（免費額度、約 10 秒）。
         </p>
       )}
-      {(routine.isError || deep.isError) && (
+      {routine.isError && (
         <p className="mb-2 text-sm text-red-500">
-          {((routine.error ?? deep.error) as Error).message}
+          {(routine.error as Error).message}
         </p>
       )}
       {data && <ReportBody data={data} />}

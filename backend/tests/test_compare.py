@@ -63,3 +63,44 @@ def test_compare_too_many_symbols_400(client):
     syms = ",".join(f"S{i}" for i in range(9))
     res = client.get("/api/v1/compare", params={"market": "TW", "symbols": syms, "range": "3m"})
     assert res.status_code == 400
+
+
+def test_compare_custom_range(client):
+    """start/end 自訂區間：只取區間內資料；參數不成對或順序錯回 400。"""
+    db = SessionLocal()
+    try:
+        s = Stock(symbol="CCC", market="TW", name="CCC", currency="TWD", kind="stock")
+        db.add(s)
+        db.commit()
+        db.refresh(s)
+        for i in range(40):
+            db.add(DailyPrice(
+                stock_id=s.id, date=date.today() - timedelta(days=40 - i),
+                open=100, high=100, low=100, close=100.0 + i, volume=100,
+            ))
+        db.commit()
+    finally:
+        db.close()
+
+    start = (date.today() - timedelta(days=20)).isoformat()
+    end = (date.today() - timedelta(days=5)).isoformat()
+    res = client.get("/api/v1/compare", params={
+        "market": "TW", "symbols": "CCC", "range": "1y", "start": start, "end": end,
+    })
+    assert res.status_code == 200
+    series = res.json()["data"]["series"]["CCC"]
+    assert series[0]["date"] >= start
+    assert series[-1]["date"] <= end
+    assert series[0]["value"] == 100.0  # 區間首日正規化為 100
+
+    # 只給 start 沒給 end → 400
+    res = client.get("/api/v1/compare", params={
+        "market": "TW", "symbols": "CCC", "start": start,
+    })
+    assert res.status_code == 400
+
+    # start >= end → 400
+    res = client.get("/api/v1/compare", params={
+        "market": "TW", "symbols": "CCC", "start": end, "end": start,
+    })
+    assert res.status_code == 400

@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import {
   CartesianGrid,
@@ -16,6 +16,7 @@ import {
 import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import { useWatchlist } from "@/hooks/use-stocks";
 import { apiGet, apiRequest } from "@/lib/api";
+import { TOOLTIP_CONTENT_STYLE, TOOLTIP_LABEL_STYLE } from "@/lib/chart-theme";
 import { useMarketStore } from "@/stores/market";
 
 interface BacktestResult {
@@ -63,8 +64,11 @@ export default function BacktestPage() {
   const [rangeDays, setRangeDays] = useState(365);
   const [slippageBps, setSlippageBps] = useState(5);
 
-  const run = useMutation({
-    mutationFn: () => apiRequest<BacktestResult>("/backtest", {
+  // 標的/策略/期間/滑價一變就自動重跑（結果為確定性計算，當 query 快取）
+  const run = useQuery({
+    queryKey: ["backtest", market, symbol, strategy, rangeDays, slippageBps],
+    queryFn: () =>
+      apiRequest<BacktestResult>("/backtest", {
         method: "POST",
         body: {
           market: market.toUpperCase(),
@@ -74,6 +78,8 @@ export default function BacktestPage() {
           slippage_bps: slippageBps,
         },
       }),
+    enabled: !!symbol,
+    staleTime: 5 * 60_000,
   });
 
   const result = run.data;
@@ -133,13 +139,9 @@ export default function BacktestPage() {
               ))}
             </select>
           </label>
-          <button
-            onClick={() => run.mutate()}
-            disabled={!symbol || run.isPending}
-            className="rounded-lg bg-neutral-900 px-4 py-2 text-sm text-white disabled:opacity-40 dark:bg-white dark:text-neutral-900"
-          >
-            {run.isPending ? "回測中…" : "執行回測"}
-          </button>
+          {run.isFetching && (
+            <span className="pb-2 text-sm text-neutral-500">回測中…</span>
+          )}
         </div>
         {run.isError && <p className="mt-2 text-sm text-red-500">{(run.error as Error).message}</p>}
         <FreshnessNote>{FRESHNESS.backtest}</FreshnessNote>
@@ -171,7 +173,7 @@ export default function BacktestPage() {
                 <CartesianGrid strokeOpacity={0.15} vertical={false} />
                 <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={40} />
                 <YAxis tick={{ fontSize: 11 }} width={56} domain={["auto", "auto"]} />
-                <Tooltip contentStyle={{ fontSize: 12 }} />
+                <Tooltip contentStyle={TOOLTIP_CONTENT_STYLE} labelStyle={TOOLTIP_LABEL_STYLE} />
                 <ReferenceLine y={1} stroke="#737373" strokeDasharray="4 4" />
                 <Line dataKey="equity" stroke="#3b82f6" dot={false} strokeWidth={1.8} name="策略權益" />
               </LineChart>

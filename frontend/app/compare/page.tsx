@@ -17,6 +17,7 @@ import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import { useGroups } from "@/hooks/use-groups";
 import { useWatchlist } from "@/hooks/use-stocks";
 import { apiGet } from "@/lib/api";
+import { TOOLTIP_CONTENT_STYLE, TOOLTIP_LABEL_STYLE } from "@/lib/chart-theme";
 import { useMarketStore } from "@/stores/market";
 
 const LINE_COLORS = ["#3b82f6", "#ef4444", "#22c55e", "#f59e0b", "#a855f7", "#06b6d4", "#ec4899", "#84cc16"];
@@ -51,14 +52,22 @@ export default function ComparePage() {
   const { data: watchlist } = useWatchlist();
   const { data: groups } = useGroups();
   const [selected, setSelected] = useState<string[]>([]);
-  const [range, setRange] = useState<"3m" | "6m" | "1y">("1y");
+  const [range, setRange] = useState<"3m" | "6m" | "1y" | "custom">("1y");
+  const [customStart, setCustomStart] = useState("");
+  const [customEnd, setCustomEnd] = useState("");
   const [sortKey, setSortKey] = useState<(typeof COLUMNS)[number]["key"]>("return_1m");
 
+  const customReady = range !== "custom" || (!!customStart && !!customEnd && customStart < customEnd);
+  const rangeParams: Record<string, string> =
+    range === "custom"
+      ? { range: "1y", start: customStart, end: customEnd }
+      : { range };
+
   const { data, isFetching, isError, error } = useQuery({
-    queryKey: ["compare", market, selected.join(","), range],
+    queryKey: ["compare", market, selected.join(","), range, customStart, customEnd],
     queryFn: () =>
-      apiGet<CompareData>("/compare", { symbols: selected.join(","), range }, market),
-    enabled: selected.length >= 1,
+      apiGet<CompareData>("/compare", { symbols: selected.join(","), ...rangeParams }, market),
+    enabled: selected.length >= 1 && customReady,
   });
 
   const toggle = (symbol: string) =>
@@ -78,10 +87,20 @@ export default function ComparePage() {
   return (
     <div className="space-y-5">
       <section className="rounded-xl border border-neutral-200 p-5 dark:border-neutral-800">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="text-lg font-semibold">選擇比較標的（最多 8 檔）</h2>
-          <div className="flex gap-1">
-            {(["3m", "6m", "1y"] as const).map((r) => (
+        <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold">選擇比較標的（最多 8 檔）</h2>
+            {selected.length > 0 && (
+              <button
+                onClick={() => setSelected([])}
+                className="rounded-md border border-neutral-300 px-2 py-0.5 text-xs text-neutral-500 hover:bg-neutral-100 hover:text-red-500 dark:border-neutral-700 dark:hover:bg-neutral-800"
+              >
+                清除已選（{selected.length}）
+              </button>
+            )}
+          </div>
+          <div className="flex flex-wrap items-center gap-1">
+            {(["3m", "6m", "1y", "custom"] as const).map((r) => (
               <button
                 key={r}
                 onClick={() => setRange(r)}
@@ -91,11 +110,33 @@ export default function ComparePage() {
                     : "text-neutral-500 hover:bg-neutral-100 dark:hover:bg-neutral-800"
                 }`}
               >
-                {r === "3m" ? "3 個月" : r === "6m" ? "6 個月" : "1 年"}
+                {r === "3m" ? "3 個月" : r === "6m" ? "6 個月" : r === "1y" ? "1 年" : "自訂"}
               </button>
             ))}
+            {range === "custom" && (
+              <span className="ml-1 flex items-center gap-1 text-sm text-neutral-500">
+                <input
+                  type="date"
+                  value={customStart}
+                  max={customEnd || undefined}
+                  onChange={(e) => setCustomStart(e.target.value)}
+                  className="rounded-md border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+                />
+                ~
+                <input
+                  type="date"
+                  value={customEnd}
+                  min={customStart || undefined}
+                  onChange={(e) => setCustomEnd(e.target.value)}
+                  className="rounded-md border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+                />
+              </span>
+            )}
           </div>
         </div>
+        {range === "custom" && !customReady && (
+          <p className="mb-2 text-xs text-neutral-500">請選擇起訖日期（起日需早於迄日）。</p>
+        )}
         {!watchlist?.length && (
           <p className="text-sm text-neutral-500">自選清單為空，請先到儀表板加入股票。</p>
         )}
@@ -206,7 +247,8 @@ export default function ComparePage() {
                 <XAxis dataKey="date" tick={{ fontSize: 11 }} minTickGap={40} />
                 <YAxis tick={{ fontSize: 11 }} domain={["auto", "auto"]} width={48} />
                 <Tooltip
-                  contentStyle={{ fontSize: 12 }}
+                  contentStyle={TOOLTIP_CONTENT_STYLE}
+                  labelStyle={TOOLTIP_LABEL_STYLE}
                   formatter={(v) => (typeof v === "number" ? v.toFixed(1) : String(v))}
                 />
                 <Legend />

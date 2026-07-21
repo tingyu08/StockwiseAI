@@ -24,3 +24,12 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Tailwind v4 preflight 將按鈕游標設為 default，統一改回可點擊手勢 */
+button:not(:disabled),
+[role="button"]:not(:disabled),
+select:not(:disabled),
+label:has(> input[type="checkbox"]:not(:disabled)),
+summary {
+  cursor: pointer;
+}

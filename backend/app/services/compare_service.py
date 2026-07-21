@@ -13,9 +13,20 @@ RANGE_DAYS = {"3m": 90, "6m": 180, "1y": 365}
 TRADING_DAYS_PER_YEAR = 252
 
 
-def compare(db: Session, market: str, symbols: list[str], range_key: str) -> dict:
+def compare(
+    db: Session,
+    market: str,
+    symbols: list[str],
+    range_key: str,
+    start: date | None = None,
+    end: date | None = None,
+) -> dict:
+    """start/end 成對提供時為自訂區間，否則依 range_key 推算。"""
     today = market_today(market)
-    since = today - timedelta(days=RANGE_DAYS[range_key])
+    if start is not None and end is not None:
+        since, until = start, min(end, today)
+    else:
+        since, until = today - timedelta(days=RANGE_DAYS[range_key]), today
     rows = []
     series_map: dict[str, list[dict]] = {}
 
@@ -28,7 +39,11 @@ def compare(db: Session, market: str, symbols: list[str], range_key: str) -> dic
 
         prices = db.execute(
             select(DailyPrice)
-            .where(DailyPrice.stock_id == stock.id, DailyPrice.date >= since)
+            .where(
+                DailyPrice.stock_id == stock.id,
+                DailyPrice.date >= since,
+                DailyPrice.date <= until,
+            )
             .order_by(DailyPrice.date)
         ).scalars().all()
         closes = [(p.date, float(p.close)) for p in prices if p.close is not None]
@@ -44,7 +59,7 @@ def compare(db: Session, market: str, symbols: list[str], range_key: str) -> dic
                 "return_1w": _trailing_return(values, 5),
                 "return_1m": _trailing_return(values, 21),
                 "return_3m": _trailing_return(values, 63),
-                "return_ytd": _ytd_return(closes, today),
+                "return_ytd": _ytd_return(closes, until),
                 "annualized_return": _annualized(values),
                 "volatility": _volatility(values),
                 "last_close": values[-1],
