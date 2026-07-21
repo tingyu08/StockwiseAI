@@ -35,7 +35,9 @@ function useRunAnalysis(kind: "routine" | "deep", symbol: string) {
   return useMutation({
     mutationFn: () => apiRequest<AnalysisData>(
       `/stocks/${symbol}/analysis:${kind}`,
-      { method: "POST", market },
+      // AI 推理開啟後單次分析可達 30 秒以上（後端曾實測 30.9s），
+      // 預設 30s timeout 會在後端即將成功時放棄 → 給 3 分鐘
+      { method: "POST", market, timeoutMs: 180_000 },
     ),
     onSuccess: (data) => {
       qc.setQueryData(["analysis", market, symbol], data);
