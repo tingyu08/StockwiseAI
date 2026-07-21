@@ -122,6 +122,47 @@ async def test_us_provider_falls_back_when_yfinance_returns_empty(monkeypatch):
     assert rows[0].close == 744.8
 
 
+# ---- 搜尋驗證的 FinMind 備援（Yahoo 限流時仍能新增自選股）----
+
+def _patch_lookup_rate_limited(monkeypatch):
+    from app.core.exceptions import UpstreamError
+    from app.providers.market import yfinance_us
+
+    async def rate_limited(self, symbol):
+        raise UpstreamError("美股查詢暫時被上游限流，請稍後再試")
+
+    monkeypatch.setattr(yfinance_us.YFinanceProvider, "_lookup", rate_limited)
+
+
+async def test_search_falls_back_to_finmind_when_rate_limited(monkeypatch):
+    from app.providers.market.yfinance_us import YFinanceProvider
+
+    _patch_lookup_rate_limited(monkeypatch)
+    fallback = pd.DataFrame({
+        "Date": pd.to_datetime(["2026-07-20"]),
+        "Open": [97.6], "High": [101.0], "Low": [96.9],
+        "Close": [97.06], "Volume": [89273530],
+    })
+    monkeypatch.setattr(finmind_us, "fetch_daily", lambda *a, **kw: fallback)
+
+    results = await YFinanceProvider().search_stocks("intc")
+
+    assert len(results) == 1
+    assert results[0].symbol == "INTC" and results[0].kind == "stock"
+
+
+async def test_search_reraises_rate_limit_when_finmind_also_empty(monkeypatch):
+    from app.core.exceptions import UpstreamError
+    from app.providers.market.yfinance_us import YFinanceProvider
+
+    _patch_lookup_rate_limited(monkeypatch)
+    monkeypatch.setattr(finmind_us, "fetch_daily", lambda *a, **kw: pd.DataFrame())
+
+    # FinMind 也查無 → 應如實回報「限流」而非誤判成「查無」
+    with pytest.raises(UpstreamError, match="限流"):
+        await YFinanceProvider().search_stocks("ZZZZZZ")
+
+
 async def test_finmind_provider_retries_status_errors(monkeypatch):
     calls = 0
 

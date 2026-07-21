@@ -19,9 +19,34 @@ class YFinanceProvider(MarketDataProvider):
     market = "US"
 
     async def search_stocks(self, query: str) -> list[StockInfo]:
-        """美股不維護全清單：以 symbol 直接驗證（大寫代號查得到就回傳）。"""
-        info = await self._lookup(query.upper())
+        """美股不維護全清單：以 symbol 直接驗證（大寫代號查得到就回傳）。
+
+        yfinance 被 Yahoo 限流時退 FinMind 驗證：近幾日有日線＝代號存在。
+        FinMind 沒有名稱/類型資訊，name 先用代號、kind 猜 stock——
+        之後 yfinance 解封、資料同步時不受影響（同步只認 symbol）。
+        """
+        symbol = query.upper()
+        try:
+            info = await self._lookup(symbol)
+        except UpstreamError:
+            info = await self._lookup_via_finmind(symbol)
+            if info is None:
+                raise  # FinMind 也查無 → 如實回報限流，而非誤判成「查無」
         return [info] if info else []
+
+    @staticmethod
+    async def _lookup_via_finmind(symbol: str) -> StockInfo | None:
+        def _get() -> StockInfo | None:
+            df = finmind_us.fetch_daily(symbol)
+            if df.empty:
+                return None
+            return StockInfo(symbol=symbol, name=symbol, currency="USD", kind="stock")
+
+        try:
+            return await asyncio.to_thread(_get)
+        except Exception as exc:
+            logger.warning("FinMind 備援查詢 %s 失敗：%s", symbol, exc)
+            return None
 
     async def _lookup(self, symbol: str) -> StockInfo | None:
         from yfinance.exceptions import YFRateLimitError
