@@ -24,6 +24,8 @@ class YFinanceProvider(MarketDataProvider):
         return [info] if info else []
 
     async def _lookup(self, symbol: str) -> StockInfo | None:
+        from yfinance.exceptions import YFRateLimitError
+
         def _get() -> StockInfo | None:
             try:
                 t = yf.Ticker(symbol)
@@ -37,7 +39,11 @@ class YFinanceProvider(MarketDataProvider):
                     currency=info.get("currency") or "USD",
                     kind="etf" if quote_type == "ETF" else "stock",
                 )
-            except Exception as exc:  # yfinance 例外型別不穩定，一律視為查無
+            except YFRateLimitError as exc:
+                # 限流≠查無：吞掉會讓前端顯示「查無 INTC」誤導使用者
+                logger.warning("yfinance lookup %s rate limited: %s", symbol, exc)
+                raise UpstreamError("美股查詢暫時被上游限流，請稍後再試") from exc
+            except Exception as exc:  # 其他 yfinance 例外型別不穩定，一律視為查無
                 logger.warning("yfinance lookup %s failed: %s", symbol, exc)
                 return None
 

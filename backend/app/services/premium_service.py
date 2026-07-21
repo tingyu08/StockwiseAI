@@ -53,6 +53,13 @@ async def snapshot_premiums(db: Session, market: str) -> dict:
         updated += 1
     db.commit()
     logger.info("premium snapshot %s: %d/%d updated", market, updated, len(etfs))
+    if updated == 0:
+        # 有追蹤 ETF 卻一筆都沒更新＝上游整批失敗（如 Yahoo 對機房 IP 限流）。
+        # 必須讓工作失敗才會出現在通知裡——曾因此無聲停更一週（卡在 07-14）。
+        raise UpstreamError(
+            f"{market} NAV 快照零更新（{len(etfs)} 檔 ETF 全數抓取失敗，"
+            "美股常見原因：Yahoo 限流機房 IP）"
+        )
     return {"market": market, "updated": updated, "total_etfs": len(etfs)}
 
 
@@ -88,20 +95,33 @@ async def _tw_snapshot(symbols: set[str]) -> dict[str, tuple[float, float, date]
 
 async def _us_snapshot(symbols: list[str]) -> dict[str, tuple[float, float, date]]:
     import yfinance as yf
+    from yfinance.exceptions import YFRateLimitError
 
     def _one(symbol: str) -> tuple[float, float, date] | None:
-        try:
-            info = yf.Ticker(symbol).info
-            nav = info.get("navPrice")
-            price = info.get("regularMarketPrice")
-            if nav and price:
-                return float(nav), float(price), market_today("US")
-        except Exception as exc:
-            logger.warning("yfinance nav %s failed: %s", symbol, exc)
+        info = yf.Ticker(symbol).info
+        nav = info.get("navPrice")
+        price = info.get("regularMarketPrice")
+        if nav and price:
+            return float(nav), float(price), market_today("US")
         return None
 
-    results = await asyncio.gather(*(asyncio.to_thread(_one, s) for s in symbols))
-    return {s: r for s, r in zip(symbols, results) if r is not None}
+    # 逐檔序列化＋間隔：Yahoo 對機房 IP 限流敏感，並發突發最容易觸發 429
+    out: dict[str, tuple[float, float, date]] = {}
+    for i, symbol in enumerate(symbols):
+        if i:
+            await asyncio.sleep(2)
+        try:
+            result = await asyncio.to_thread(_one, symbol)
+        except YFRateLimitError as exc:
+            # 已被限流，續打只會延長封鎖窗口——直接放棄本輪剩餘標的
+            logger.warning("yfinance nav 被限流（%s），中止本輪剩餘抓取", exc)
+            break
+        except Exception as exc:
+            logger.warning("yfinance nav %s failed: %s", symbol, exc)
+            continue
+        if result is not None:
+            out[symbol] = result
+    return out
 
 
 def premium_list(db: Session, market: str) -> list[dict]:

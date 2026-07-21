@@ -46,45 +46,55 @@ jobs:
           JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
         run: bash .github/scripts/run-job.sh "${{ inputs.job }}"
 
+      # 序列一律「單一 job 失敗仍續跑其餘」：曾發生 overview 失敗連累
+      # sim-decide 沒跑（決策整天停擺）。失敗仍會讓整個 step 以非零收尾 → 觸發通知。
       - name: TW pre-open sequence
         if: github.event.schedule == '10 22 * * 0-4'
         env:
           JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
         run: |
+          fail=0
           for job in news-tw ai-batch-tw overview-tw sim-decide-tw; do
             echo "== $job =="
-            bash .github/scripts/run-job.sh "$job"
+            bash .github/scripts/run-job.sh "$job" || fail=1
           done
+          exit $fail
 
       - name: TW post-close sequence
         if: github.event.schedule == '30 6 * * 1-5'
         env:
           JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
         run: |
+          fail=0
           for job in sync-tw sim-fill-tw nav-tw alerts-tw; do
             echo "== $job =="
-            bash .github/scripts/run-job.sh "$job"
+            bash .github/scripts/run-job.sh "$job" || fail=1
           done
+          exit $fail
 
       - name: US pre-open sequence
         if: github.event.schedule == '40 11 * * 1-5'
         env:
           JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
         run: |
+          fail=0
           for job in news-us ai-batch-us overview-us sim-decide-us; do
             echo "== $job =="
-            bash .github/scripts/run-job.sh "$job"
+            bash .github/scripts/run-job.sh "$job" || fail=1
           done
+          exit $fail
 
       - name: US post-close sequence
         if: github.event.schedule == '30 21 * * 1-5'
         env:
           JOB_TOKEN: ${{ secrets.JOB_TOKEN }}
         run: |
+          fail=0
           for job in sync-us sim-fill-us nav-us alerts-us; do
             echo "== $job =="
-            bash .github/scripts/run-job.sh "$job"
+            bash .github/scripts/run-job.sh "$job" || fail=1
           done
+          exit $fail
 
       - name: Weekly maintenance
         if: github.event.schedule == '15 19 * * 0'
