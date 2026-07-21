@@ -214,6 +214,15 @@ async def maintenance_daily() -> dict:
         db.close()
 
 
+async def backup_db_daily() -> dict:
+    """每日 pg_dump 備份（單機自架 Postgres 的必要配套；SQLite 開發環境自動跳過）。"""
+    import asyncio
+
+    from app.services.backup_service import run_db_backup
+
+    return await asyncio.to_thread(run_db_backup)
+
+
 JOBS = {
     "sync-tw": lambda: sync_market_daily("TW"),
     "sync-us": lambda: sync_market_daily("US"),
@@ -234,11 +243,12 @@ JOBS = {
     "sentinel-tw": lambda: exit_sentinel_job("TW"),
     "sentinel-us": lambda: exit_sentinel_job("US"),
     "maintenance": maintenance_daily,
+    "backup-db": backup_db_daily,
 }
 
 
-def _enqueue_sentinel(name: str) -> None:
-    """內部排程也走 JobRun 佇列：執行紀錄進「工作中心」。
+def _enqueue_scheduled(name: str) -> None:
+    """內部排程一律走 JobRun 佇列：執行紀錄進「工作中心」。
     idempotency key（scheduled:{name}）防同名工作排隊中重複入列
     （也涵蓋任何手動/外部觸發撞上內部排程的情況）。"""
     from app.services.job_service import enqueue_job
@@ -257,43 +267,52 @@ def start_sentinel_scheduler() -> AsyncIOScheduler:
     的備援幾乎無實益，徒增噪音）。
     """
     scheduler = AsyncIOScheduler(timezone=TZ)
-    scheduler.add_job(_enqueue_sentinel, CronTrigger(hour="9-13", minute=10, timezone=TZ), args=["sentinel-tw"])
-    scheduler.add_job(_enqueue_sentinel, CronTrigger(hour="21-23,0-3", minute=40, timezone=TZ), args=["sentinel-us"])
-    scheduler.add_job(_enqueue_sentinel, CronTrigger(hour=3, minute=55, timezone=TZ), args=["sentinel-us"])
+    scheduler.add_job(_enqueue_scheduled, CronTrigger(hour="9-13", minute=10, timezone=TZ), args=["sentinel-tw"])
+    scheduler.add_job(_enqueue_scheduled, CronTrigger(hour="21-23,0-3", minute=40, timezone=TZ), args=["sentinel-us"])
+    scheduler.add_job(_enqueue_scheduled, CronTrigger(hour=3, minute=55, timezone=TZ), args=["sentinel-us"])
     scheduler.start()
     logger.info("Sentinel-only APScheduler started (external mode)")
     return scheduler
 
 
 def start_scheduler() -> AsyncIOScheduler:
+    """internal 模式：全部排程走後端時鐘，並一律經 JobRun 佇列執行——
+    每一輪都在「工作中心」留下觸發時間與結果，準時與否有據可查。"""
     scheduler = AsyncIOScheduler(timezone=TZ)
+
+    def at(hour, minute, name):
+        scheduler.add_job(
+            _enqueue_scheduled, CronTrigger(hour=hour, minute=minute, timezone=TZ), args=[name]
+        )
+
     # 分析/決策＝開盤前晨間（已消化昨收＋隔夜美股/國際盤）；成交於當日開盤價。
     # 資料任務（同步/撮合/淨值/警示）＝收盤後。
     #
     # 台股晨間：06:10 新聞 → 06:40 AI 批次 → 06:55 簡報 → 07:10 產生委託（09:00 開盤成交）
-    scheduler.add_job(news_research_daily, CronTrigger(hour=6, minute=10, timezone=TZ), args=["TW"])
-    scheduler.add_job(ai_batch_daily, CronTrigger(hour=6, minute=40, timezone=TZ), args=["TW"])
-    scheduler.add_job(overview_daily, CronTrigger(hour=6, minute=55, timezone=TZ), args=["TW"])
-    scheduler.add_job(sim_decide_daily, CronTrigger(hour=7, minute=10, timezone=TZ), args=["TW"])
+    at(6, 10, "news-tw")
+    at(6, 40, "ai-batch-tw")
+    at(6, 55, "overview-tw")
+    at(7, 10, "sim-decide-tw")
     # 台股收盤後：14:30 同步 → 14:35 撮合晨間委託（記入今日開盤價）→ 14:45 淨值 → 14:50 警示
-    scheduler.add_job(sync_market_daily, CronTrigger(hour=14, minute=30, timezone=TZ), args=["TW"])
-    scheduler.add_job(sim_fill_daily, CronTrigger(hour=14, minute=35, timezone=TZ), args=["TW"])
-    scheduler.add_job(nav_snapshot_daily, CronTrigger(hour=14, minute=45, timezone=TZ), args=["TW"])
-    scheduler.add_job(alert_check_daily, CronTrigger(hour=14, minute=50, timezone=TZ), args=["TW"])
+    at(14, 30, "sync-tw")
+    at(14, 35, "sim-fill-tw")
+    at(14, 45, "nav-tw")
+    at(14, 50, "alerts-tw")
     # 美股晨間（美東開盤前，台灣時間晚上）：19:40 新聞 → 20:10 批次 → 20:25 簡報 → 20:40 委託（21:30 開盤成交）
-    scheduler.add_job(news_research_daily, CronTrigger(hour=19, minute=40, timezone=TZ), args=["US"])
-    scheduler.add_job(ai_batch_daily, CronTrigger(hour=20, minute=10, timezone=TZ), args=["US"])
-    scheduler.add_job(overview_daily, CronTrigger(hour=20, minute=25, timezone=TZ), args=["US"])
-    scheduler.add_job(sim_decide_daily, CronTrigger(hour=20, minute=40, timezone=TZ), args=["US"])
+    at(19, 40, "news-us")
+    at(20, 10, "ai-batch-us")
+    at(20, 25, "overview-us")
+    at(20, 40, "sim-decide-us")
     # 美股收盤後（台灣清晨）：05:30 同步 → 05:35 撮合 → 05:45 淨值 → 05:50 警示
-    scheduler.add_job(sync_market_daily, CronTrigger(hour=5, minute=30, timezone=TZ), args=["US"])
-    scheduler.add_job(sim_fill_daily, CronTrigger(hour=5, minute=35, timezone=TZ), args=["US"])
-    scheduler.add_job(nav_snapshot_daily, CronTrigger(hour=5, minute=45, timezone=TZ), args=["US"])
-    scheduler.add_job(alert_check_daily, CronTrigger(hour=5, minute=50, timezone=TZ), args=["US"])
-    scheduler.add_job(maintenance_daily, CronTrigger(hour=3, minute=15, timezone=TZ))
+    at(5, 30, "sync-us")
+    at(5, 35, "sim-fill-us")
+    at(5, 45, "nav-us")
+    at(5, 50, "alerts-us")
+    at(3, 15, "maintenance")
+    at(15, 30, "backup-db")  # 每日 DB 備份（台股收盤序列之後的閒置時段）
     # 盤中出場哨兵（每小時；非交易日/時段由哨兵自行 no-op）
-    scheduler.add_job(exit_sentinel_job, CronTrigger(hour="9-13", minute=10, timezone=TZ), args=["TW"])
-    scheduler.add_job(exit_sentinel_job, CronTrigger(hour="21-23,0-4", minute=40, timezone=TZ), args=["US"])
+    at("9-13", 10, "sentinel-tw")
+    at("21-23,0-4", 40, "sentinel-us")
     scheduler.start()
     logger.info("APScheduler started (internal mode)")
     return scheduler

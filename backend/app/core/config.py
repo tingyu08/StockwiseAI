@@ -45,6 +45,7 @@ class Settings(BaseSettings):
     gemini_max_retries: int = Field(default=2, ge=0, le=5)
     scheduler_mode: str = Field(default="internal", pattern="^(internal|external)$")
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
+    backup_dir: str = str(BASE_DIR / "data" / "backups")
 
     quotas_file: Path = BASE_DIR / "app" / "core" / "quotas.yaml"
 

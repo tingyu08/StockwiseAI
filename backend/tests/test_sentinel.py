@@ -146,7 +146,7 @@ async def test_sentinel_scheduler_registers_only_sentinels():
         jobs = scheduler.get_jobs()
         assert len(jobs) == 3  # TW 每小時、US 每小時、US 收盤前最後一巡
         # 內部排程走 JobRun 佇列（工作中心可見＋與 GH 備援去重）
-        assert all(job.func.__name__ == "_enqueue_sentinel" for job in jobs)
+        assert all(job.func.__name__ == "_enqueue_scheduled" for job in jobs)
         assert sorted(job.args[0] for job in jobs) == ["sentinel-tw", "sentinel-us", "sentinel-us"]
     finally:
         scheduler.shutdown(wait=False)
