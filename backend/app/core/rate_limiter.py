@@ -152,7 +152,11 @@ def reserve_quota(db: Session, model: str, estimated_tokens: int = 0) -> int:
         )
         db.add(reservation)
         db.commit()
-        db.refresh(reservation)
+        # 不可在此 refresh／再讀任何資料：這裡回傳後緊接著就是漫長的 AI HTTP 呼叫，
+        # 任何一句 SQL 都會開啟新交易並在呼叫期間閒置，觸發 Neon 的
+        # idle_in_transaction_session_timeout 砍掉連線（pool_pre_ping 只在取出
+        # 連線時檢查，救不了握在手上的連線）。expire_on_commit=False，
+        # commit 後 id 仍在（INSERT 由 RETURNING 取得），毋須 refresh。
         return reservation.id
 
 

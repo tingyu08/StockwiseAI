@@ -91,3 +91,12 @@ def test_active_reservation_consumes_the_last_rpm_slot(db):
     assert isinstance(reservation_id, int)
     with pytest.raises(QuotaExceededError, match="RPM"):
         reserve(db, MODEL, estimated_tokens=100)
+
+
+def test_reserve_leaves_no_open_transaction(db):
+    """預約後緊接著是漫長的 AI HTTP 呼叫：此時若還開著交易，Neon 會以
+    idle_in_transaction_session_timeout 砍掉連線，導致呼叫回來後 finalize 失敗。"""
+    reservation_id = rate_limiter.reserve_quota(db, MODEL, estimated_tokens=100)
+
+    assert isinstance(reservation_id, int)  # 不 refresh 也必須拿得到 id
+    assert not db.in_transaction(), "reserve_quota 回傳後不得留下開啟中的交易"
