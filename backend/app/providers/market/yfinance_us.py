@@ -1,5 +1,7 @@
-"""美股資料源：yfinance 主源＋FinMind 備援（Yahoo 對機房 IP 常限流）。
+"""美股資料源：日線以 FinMind 為主（官方 API），yfinance 備援。
 
+Yahoo 對機房 IP 常限流，雲端上 yfinance 幾乎必失敗，故日線主從對調；
+搜尋驗證仍以 yfinance 優先（需要名稱/ETF 類型中繼資料，FinMind 沒有）。
 yfinance 是同步庫，統一用 asyncio.to_thread 包成 async。
 """
 import asyncio
@@ -113,16 +115,16 @@ class YFinanceProvider(MarketDataProvider):
             ]
 
         try:
-            rows = await asyncio.to_thread(_download)
+            rows = await asyncio.to_thread(_download_finmind)
             if rows:
                 return rows
-            logger.warning("yfinance 回傳空資料 %s，改用 FinMind", symbol)
+            logger.warning("FinMind %s 查無日線，改試 yfinance", symbol)
         except Exception as exc:
-            logger.warning("yfinance 抓取 %s 失敗（%s），改用 FinMind", symbol, exc)
+            logger.warning("FinMind 抓取 %s 失敗（%s），改試 yfinance", symbol, exc)
         try:
-            return await asyncio.to_thread(_download_finmind)
+            return await asyncio.to_thread(_download)
         except Exception as fallback_exc:
-            raise UpstreamError(f"yfinance 與 FinMind 抓取 {symbol} 皆失敗") from fallback_exc
+            raise UpstreamError(f"FinMind 與 yfinance 抓取 {symbol} 皆失敗") from fallback_exc
 
     async def get_etf_nav(self, symbol: str, start: date, end: date) -> list[NavRow]:
         return []  # Phase 3 實作

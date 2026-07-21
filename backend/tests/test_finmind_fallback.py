@@ -122,6 +122,33 @@ async def test_us_provider_falls_back_when_yfinance_returns_empty(monkeypatch):
     assert rows[0].close == 744.8
 
 
+async def test_us_provider_prefers_finmind(monkeypatch):
+    """日線主源為 FinMind：成功時完全不呼叫 yfinance。"""
+    from app.providers.market.yfinance_us import YFinanceProvider, yf
+
+    class _MustNotBeCalled:
+        def __init__(self, *a):
+            raise AssertionError("FinMind 成功時不應呼叫 yfinance")
+
+    monkeypatch.setattr(yf, "Ticker", _MustNotBeCalled)
+    monkeypatch.setattr(finmind_us.httpx, "get", _mock_get(US_BODY))
+    rows = await YFinanceProvider().get_daily_prices("SPY", date(2026, 7, 1), date(2026, 7, 9))
+    assert len(rows) == 2
+
+
+def test_market_context_prefers_finmind(monkeypatch):
+    from app.services import market_context
+
+    class _MustNotBeCalled:
+        def __init__(self, *a):
+            raise AssertionError("FinMind 成功時不應呼叫 yfinance")
+
+    monkeypatch.setattr(market_context.yf, "Ticker", _MustNotBeCalled)
+    monkeypatch.setattr(finmind_us.httpx, "get", _mock_get(US_BODY))
+    quote = market_context._fetch_quote("^GSPC", "S&P 500")
+    assert quote is not None and quote.close == 744.8
+
+
 # ---- 搜尋驗證的 FinMind 備援（Yahoo 限流時仍能新增自選股）----
 
 def _patch_lookup_rate_limited(monkeypatch):

@@ -1,4 +1,4 @@
-"""市場環境資料：全球指數、台積電 ADR、加權指數技術位階（yfinance，免費）。
+"""市場環境資料：全球指數、台積電 ADR、加權指數技術位階（FinMind 主源）。
 
 供每日簡報的「全球盤勢」與「大盤預判」模組使用——後端抓真實數據餵 AI，
 AI 只負責解讀，不虛構行情。
@@ -33,23 +33,27 @@ class IndexQuote:
 
 
 def _history(ticker: str, period_days: int) -> pd.DataFrame | None:
-    """近 N 日日線（含 Close/High/Low）。yfinance 被限流時退 FinMind。"""
+    """近 N 日日線（含 Close/High/Low）。
+
+    FinMind 為主（官方 API，雲端 IP 不被限流）；查無或失敗才退 yfinance
+    （Yahoo 對機房 IP 常限流，實務上只在本機開發時派得上用場）。
+    """
+    try:
+        df = finmind_us.fetch_daily(ticker)
+        if not df.empty:
+            return df.tail(period_days).set_index("Date")
+        logger.warning("FinMind %s 查無資料（改試 yfinance）", ticker)
+    except Exception as exc:
+        logger.warning("FinMind %s failed: %s（改試 yfinance）", ticker, exc)
     try:
         hist = yf.Ticker(ticker).history(
             period=f"{period_days}d", interval="1d", auto_adjust=False
         )
         if hist is not None and len(hist["Close"].dropna()) >= 2:
             return hist
-        raise ValueError("yfinance 回傳空資料")
+        return None
     except Exception as exc:
-        logger.warning("index fetch %s failed: %s（改用 FinMind）", ticker, exc)
-    try:
-        df = finmind_us.fetch_daily(ticker)
-        if df.empty:
-            return None
-        return df.tail(period_days).set_index("Date")
-    except Exception as exc:
-        logger.warning("finmind fallback %s failed: %s", ticker, exc)
+        logger.warning("yfinance fallback %s failed: %s", ticker, exc)
         return None
 
 
