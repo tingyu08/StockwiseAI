@@ -11,13 +11,13 @@
 |---|------|------|------|---------|
 | ADR-01 | 後端語言/框架 | Python 3.12 + FastAPI | pandas/TA 量化生態、Pydantic 原生驗證、async 支援 | Node.js（量化生態弱）、Django（過重） |
 | ADR-02 | 前端框架 | Next.js 15 (App Router) + TypeScript | SSR 首屏快、Vercel 免費部署、生態成熟 | Vite SPA（無 SSR）、Nuxt |
-| ADR-03 | 資料庫 | **開發＝SQLite；雲端部署＝PostgreSQL（Neon 免費層）**，以 SQLAlchemy 統一，兩者皆可跑 | 單人低併發 SQLite 足夠；Neon 免費 0.5GB 夠放多年日線；ORM 隔離讓兩者無痛切換 | MySQL（免費雲端選擇少）、MongoDB（關聯查詢多不適合） |
+| ADR-03 | 資料庫 | **開發＝SQLite；雲端部署＝PostgreSQL**（2026-07 起為 Zeabur 同機 PG 17，先前為 Neon），以 SQLAlchemy 統一 | 單人低併發 SQLite 足夠；ORM 隔離讓兩者無痛切換 | MySQL（免費雲端選擇少）、MongoDB（關聯查詢多不適合） |
 | ADR-04 | ORM/Migration | SQLAlchemy 2.0 + Alembic | 業界標準、SQLite/PG 雙支援 | 裸 SQL（migration 難管理） |
 | ADR-05 | 圖表庫 | Lightweight Charts（K 線）＋ Recharts（比較/儀表板） | 前者為 TradingView 開源專業金融圖表；後者宣告式好維護 | ECharts（單套通吃但 K 線體驗較差） |
 | ADR-06 | 狀態管理 | Zustand（市場切換等全域）＋ TanStack Query（伺服器資料快取） | 輕量、與 App Router 相容 | Redux（樣板碼多） |
-| ADR-07 | 排程 | APScheduler（進程內） | 單體部署最簡單；雲端免費層配 GitHub Actions cron 觸發 API 補位 | Celery+Redis（多一個付費依賴） |
-| ADR-08 | 部署 | **已上線（2026-07，方案 B）**：Render Free（後端，`render.yaml`）＋ Neon（DB）＋ Vercel（前端）＋ GitHub Actions cron（排程，`.github/workflows/cron.yml`）；未來視使用情況評估遷方案 C（Zeabur） | 先 $0 驗證價值再決定花錢 | — |
-| ADR-09 | 雲端 DB | **已定案：Neon**（開發期本機 SQLite，上 B 時切 `DATABASE_URL`） | 生態最穩；連線池紀律見 §6.2 | Turso（dialect 年輕）、Supabase（功能過剩） |
+| ADR-07 | 排程 | APScheduler（進程內），全部經 JobRun 佇列 | 專屬伺服器不休眠 → 進程內時鐘即可準時，且每輪在工作中心留紀錄 | Celery+Redis（多一個付費依賴）、GitHub Actions cron（延遲 1~2 小時，已退役） |
+| ADR-08 | 部署 | **現行（2026-07-21 起，方案 C）**：Zeabur 專屬伺服器（Tokyo，後端＋PG 同機）＋ Vercel（前端）。先前為方案 B（Render＋Neon＋GH cron），因跨洋延遲與休眠問題遷出，詳見 §6.3 | 實測延遲降約 20 倍，月付 $4 換掉三類結構性問題 | — |
+| ADR-09 | 雲端 DB | **現行：Zeabur 同機 PostgreSQL 17**（開發期本機 SQLite）。Neon 保留為異地備援目標 | 同機 localhost 連線消除跨區網路來回 | Neon（跨區延遲）、Turso（dialect 年輕）、Supabase（功能過剩） |
 
 ## 2. 整體架構
 
@@ -289,18 +289,34 @@ services:
   3. `/usage` 儀表板順帶顯示 Neon 當月 CU-hours（打 Neon API 取得），超過 70% 發警示
 - 冷啟動 0.5~1 秒：發生在第一個查詢，前端已有 loading 狀態，可接受
 
-### 6.3 方案 C（$5/月）：Zeabur 全家桶
+### 6.3 方案 C（$4/月）：Zeabur 專屬伺服器 — **現行架構（2026-07-21 起）**
 
-前後端＋資料庫放在同一個 Zeabur project，架構最簡單：
+**已於 2026-07-21 從方案 B 遷移至此。** 買一台 Zeabur 專屬伺服器
+（Tencent Tokyo 2 vCPU / 4GB / 60GB SSD，US$4/月；Free 會員即可掛 1 台），
+後端與 PostgreSQL 同機，前端維持 Vercel：
 
-| 元件 | Zeabur 內部署方式 |
-|------|------------------|
-| 前端 | Next.js service（git push 自動建置） |
-| 後端 | FastAPI service（常駐容器，不休眠 → APScheduler 直接跑，**不需要** GitHub Actions cron 和 `SCHEDULER_MODE=external`） |
-| 資料庫 | 一鍵 PostgreSQL service，或掛 volume 直接用 SQLite |
+| 元件 | 部署方式 |
+|------|---------|
+| 前端 | Vercel（不動）；相對路徑 `/api/v1/*` 經 `next.config.ts` 的 `rewrites()` 代理到後端 |
+| 後端 | Zeabur GitHub service，root=`/backend`，網域 `stockwise-backend.zeabur.app`；volume `backups`→`/data` |
+| 資料庫 | 同機 PostgreSQL 17 service，volume `data`→`/var/lib/postgresql/data`；後端以 `${POSTGRES_CONNECTION_STRING}` 走內網連線 |
+| 排程 | **後端進程內 APScheduler**（`SCHEDULER_MODE=internal`），全部經 JobRun 佇列 → 工作中心可查 |
 
-- **為什麼不是免費**：Zeabur 免費層（Serverless Plan）閒置會自動休眠（與 Render Free 同病），且共享叢集 2026/4 起不再接受新服務；常駐後端＋排程要穩定跑，實務上需 Developer Plan（US$5/月，用量計費另計但本 app 量級極小）
-- **適用時機**：如果願意每月花 $5 換「單一平台、免休眠、免外部 cron、部署最省事」，方案 C 優於 B；堅持 $0 則維持方案 B
+**遷移動機（實測數據）**：方案 B 的 Render 在 Oregon、Neon 在新加坡，
+每支 API 都跨洋來回——`/health/ready` 實測 700~2716ms，首頁單次載入
+28 次查詢吃掉 5.9 秒。搬到東京單機後同一檢查降到 **48~134ms（約 20 倍）**，
+DB 查詢因同機 localhost 幾乎歸零。同時一次解決三個結構性問題：
+Render 休眠、Neon `idle_in_transaction_session_timeout`、GitHub cron 1~2 小時延遲。
+
+**單機的代價與配套**：所有服務同生共死，因此
+- `backup-db` 排程每日 15:30 跑 `pg_dump` 到 `/data/backups`，輪替保留 14 份
+  （見 `app/services/backup_service.py`；零更新或失敗會讓工作變紅並發通知）
+- Neon 帳號保留不刪，作為異地備援目標
+- GitHub Actions `cron.yml` 的定時排程已全數移除，僅保留 `workflow_dispatch` 手動觸發
+
+**為什麼不是全部搬上去**：前端留在 Vercel——搬它只省約 25ms（實測 Vercel
+邊緣節點在香港 `hkg1`，非美國），卻要讓 Next.js build 的 1~2GB 記憶體尖峰
+跟生產服務搶資源，且前端從未是故障來源。
 
 ### 6.4 雲端資料庫選型：Neon vs Turso
 
