@@ -11,7 +11,8 @@ from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy import select
 
 from app.core.db import SessionLocal
-from app.models import Stock, WatchlistItem
+from app.core.exceptions import UpstreamError
+from app.models import DailyPrice, Stock, WatchlistItem
 from app.services.sync_service import sync_prices
 from app.services.time_service import market_today
 from app.services.trading_calendar import is_trading_day
@@ -35,11 +36,20 @@ def _non_trading_gate(market: str) -> dict | None:
 
 
 async def sync_market_daily(market: str) -> dict:
-    """同步該市場所有自選股。單檔失敗不中斷其他檔。"""
+    """同步該市場所有自選股。單檔失敗不中斷其他檔。
+
+    完成後檢查資料是否真的推進到「最近一個已收盤 session」——上游資料
+    尚未就緒時每檔都會靜靜回傳 0 筆，光看 synced 數字看不出來，
+    曾因此讓行情停在前一日卻回報成功。
+    """
     if gate := _non_trading_gate(market):
         return gate
+    from sqlalchemy import func
+
+    from app.services.sim.decision import _latest_session
+
     db = SessionLocal()
-    synced, failed = 0, []
+    synced, changed, failed = 0, 0, []
     try:
         stocks = db.execute(
             select(Stock)
@@ -48,14 +58,32 @@ async def sync_market_daily(market: str) -> dict:
         ).scalars().all()
         for stock in stocks:
             try:
-                await sync_prices(stock.id, stock.market, stock.symbol)
+                changed += await sync_prices(stock.id, stock.market, stock.symbol)
                 synced += 1
             except Exception:
                 logger.exception("sync %s/%s failed", market, stock.symbol)
                 failed.append(stock.symbol)
-        return {"market": market, "synced": synced, "failed": failed}
+
+        latest = db.execute(
+            select(func.max(DailyPrice.date))
+            .join(Stock, Stock.id == DailyPrice.stock_id)
+            .where(Stock.market == market)
+        ).scalar_one_or_none()
+        expected = _latest_session(market)
+        result = {
+            "market": market, "synced": synced, "rows_changed": changed,
+            "failed": failed,
+            "latest_price_date": latest.isoformat() if latest else None,
+            "expected_session": expected.isoformat(),
+        }
+        if latest is None or latest < expected:
+            raise UpstreamError(
+                f"{market} 同步後行情仍停在 {latest}（預期至少 {expected}）——"
+                "上游可能尚未提供該交易日資料，請確認排程時間是否早於資料源更新"
+            )
+        return result
     finally:
-        db.close()  # Neon 紀律：job 結束即釋放連線
+        db.close()  # job 結束即釋放連線
 
 
 async def ai_batch_daily(market: str) -> dict:
@@ -303,11 +331,14 @@ def start_scheduler() -> AsyncIOScheduler:
     at(20, 10, "ai-batch-us")
     at(20, 25, "overview-us")
     at(20, 40, "sim-decide-us")
-    # 美股收盤後（台灣清晨）：05:30 同步 → 05:35 撮合 → 05:45 淨值 → 05:50 警示
-    at(5, 30, "sync-us")
-    at(5, 35, "sim-fill-us")
-    at(5, 45, "nav-us")
-    at(5, 50, "alerts-us")
+    # 美股收盤後（台灣上午）：08:00 同步 → 08:10 撮合 → 08:20 淨值 → 08:25 警示
+    # 刻意不排在收盤後 1~2 小時：FinMind 的美股日線要數小時才會就緒，
+    # 原本 05:30（收盤後 1.5h）抓不到當日資料卻回報成功，行情因此停在前一日。
+    # 美股收盤 16:00 ET＝台灣 04:00（夏令）/05:00（冬令），08:00 兩季皆有 3 小時以上緩衝。
+    at(8, 0, "sync-us")
+    at(8, 10, "sim-fill-us")
+    at(8, 20, "nav-us")
+    at(8, 25, "alerts-us")
     at(3, 15, "maintenance")
     at(15, 30, "backup-db")  # 每日 DB 備份（台股收盤序列之後的閒置時段）
     # 盤中出場哨兵（每小時；非交易日/時段由哨兵自行 no-op）
