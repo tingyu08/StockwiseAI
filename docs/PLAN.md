@@ -123,8 +123,8 @@ watchlists       自選股清單
 
 | 方案 | 模型 | 免費額度 | 定位 |
 |------|------|---------|------|
-| **Gemini 3.5 Flash Lite**（例行批次主力） | `gemini-3.5-flash-lite` | 沿用前代設定：**15 RPM / 250K TPM / 500 RPD**（換代後尚未於儀表板核對） | 額度最寬裕，支援 structured output，例行技術面批次分析品質足夠 |
-| **Gemini 3.6 Flash**（重要決策） | `gemini-3.6-flash` | 沿用前代設定：**5 RPM / 250K TPM / 20 RPD**（換代後尚未於儀表板核對） | 優先用於單檔深度分析、每日簡報總結與模擬交易分析；額度盡或上游失敗時，後兩者自動降級 |
+| **Gemini 3.5 Flash Lite**（例行批次主力） | `gemini-3.5-flash-lite` | 本帳號實測：**15 RPM / 250K TPM / 500 RPD** | 額度最寬裕，支援 structured output，例行技術面批次分析品質足夠 |
+| **Gemini 3.6 Flash**（重要決策） | `gemini-3.6-flash` | 本帳號實測：**5 RPM / 250K TPM / 20 RPD** | 優先用於單檔深度分析、每日簡報總結與模擬交易分析；額度盡或上游失敗時，後兩者自動降級 |
 | **Antigravity Agent**（研究型任務） | `antigravity-preview-05-2026`（Interactions API，底層 Gemini 3.5 Flash） | 免費層 60 RPM / 100K TPM / 100 RPD | 自帶沙箱＋Google 搜尋＋URL 抓取＋程式碼執行的託管 agent，適合「個股新聞/事件研究」這種需要自己上網查資料的任務；**不支援 structured output、不支援 temperature 等參數、preview 狀態隨時可能變動**，故不當主分析管線 |
 
 **Antigravity 的定位（分工）**：
