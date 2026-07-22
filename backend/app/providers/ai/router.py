@@ -1,7 +1,7 @@
 """AI 降級鏈 Router。
 
-例行批次：僅使用 flash-lite，不設備援模型
-深度分析：3.6-flash（不降級——額度盡即回報，品質不可替代）
+例行批次（analyze_batch / generate_structured）：僅使用 flash-lite，不設備援
+重要任務（交易決策、每日簡報）：3.6-flash 優先，額度不足自動降級至 flash-lite
 """
 import logging
 
@@ -10,13 +10,15 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import QuotaExceededError, UpstreamError
 from app.providers.ai.base import AnalysisContext
 from app.providers.ai.gemini import GeminiProvider
-from app.providers.ai.schemas import AnalysisReport, BatchAnalysisResult
+from app.providers.ai.schemas import BatchAnalysisResult
 
 logger = logging.getLogger(__name__)
 
 ROUTINE_CHAIN = ["gemini-3.5-flash-lite"]
-DEEP_MODEL = "gemini-3.6-flash"
-PREMIUM_CHAIN = [DEEP_MODEL, *ROUTINE_CHAIN]
+# 品質優先的模型，供交易決策與每日簡報使用（單檔深度分析功能已移除，
+# 故不再叫 DEEP_MODEL）
+PREMIUM_MODEL = "gemini-3.6-flash"
+PREMIUM_CHAIN = [PREMIUM_MODEL, *ROUTINE_CHAIN]
 
 
 def _next_step(chain: list[str], index: int) -> str:
@@ -41,11 +43,6 @@ async def analyze_batch(db: Session, contexts: list[AnalysisContext]) -> tuple[B
             )
             last_error = exc
     raise UpstreamError("所有例行分析模型皆不可用") from last_error
-
-
-async def analyze_deep(db: Session, context: AnalysisContext) -> tuple[AnalysisReport, str]:
-    provider = GeminiProvider(DEEP_MODEL, db)
-    return await provider.analyze_deep(context), DEEP_MODEL
 
 
 async def analyze_trading_batch(

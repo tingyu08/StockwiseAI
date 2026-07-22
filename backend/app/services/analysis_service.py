@@ -199,58 +199,6 @@ def _insert_reports(db: Session, rows: list[dict]) -> int:
     return written
 
 
-async def run_deep(db: Session, stock: Stock) -> AiReport:
-    """單檔深度分析（使用者觸發）。當日已有 deep 報告直接回傳（快取）。"""
-    trade_date = _last_trade_date(db, stock)
-    if trade_date is None:
-        raise NotFoundError(f"{stock.symbol} 尚無價格資料")
-    context = await build_context(db, stock)
-    input_hash = analysis_input_hash(context, "deep")
-    existing = db.execute(
-        select(AiReport).where(
-            AiReport.stock_id == stock.id,
-            AiReport.trade_date == trade_date,
-            AiReport.kind == "deep",
-        )
-    ).scalar_one_or_none()
-    if existing and existing.input_hash == input_hash:
-        return existing
-
-    report, model = await ai_router.analyze_deep(db, context)
-    values = {
-        "provider": "gemini",
-        "model": model,
-        "prompt_version": PROMPT_VERSION,
-        "input_hash": input_hash,
-        "action": report.action,
-        "confidence": report.confidence,
-        "payload_json": report.model_dump_json(),
-    }
-    if existing is None:
-        row = AiReport(
-            stock_id=stock.id, trade_date=trade_date, kind="deep", **values
-        )
-        db.add(row)
-    else:
-        row = existing
-        for key, value in values.items():
-            setattr(row, key, value)
-    try:
-        db.commit()
-    except IntegrityError:
-        # 並發請求已寫入同一份（stock_id, trade_date, deep）→ 視為快取命中
-        db.rollback()
-        return db.execute(
-            select(AiReport).where(
-                AiReport.stock_id == stock.id,
-                AiReport.trade_date == trade_date,
-                AiReport.kind == "deep",
-            )
-        ).scalar_one()
-    db.refresh(row)
-    return row
-
-
 async def run_overview(db: Session, market: str, force: bool = False) -> "AiOverview":
     """一鍵：全部自選批次分析（快取）→ 四模組每日簡報（當日快取）。
 

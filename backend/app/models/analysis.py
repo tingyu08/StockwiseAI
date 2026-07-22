@@ -20,7 +20,9 @@ class AiReport(Base):
     model: Mapped[str] = mapped_column(String(64))
     prompt_version: Mapped[str] = mapped_column(String(16))
     input_hash: Mapped[str] = mapped_column(String(64), default="")
-    kind: Mapped[str] = mapped_column(String(8))  # 'routine' | 'deep' | 'news'
+    # 'routine' | 'trade' | 'news'；'deep' 為歷史值（單檔深度分析已移除，
+    # 既有資料仍可讀取，但不再產生新的）
+    kind: Mapped[str] = mapped_column(String(8))
     action: Mapped[str | None] = mapped_column(String(4))  # 'buy' | 'sell' | 'hold'
     confidence: Mapped[float | None] = mapped_column(Numeric(4, 3))
     payload_json: Mapped[str] = mapped_column(Text)  # 完整結構化報告

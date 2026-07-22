@@ -1,13 +1,14 @@
 """AIProvider 抽象介面與降級鏈 Router。
 
-降級順序（docs/PLAN.md §4.0）：
+模型分層（docs/PLAN.md §4.0）：
   例行批次   gemini-3.5-flash-lite（無備援模型）
-  深度分析   gemini-3.6-flash（額度盡即拒絕，不降級——品質不可替代）
+  重要任務   gemini-3.6-flash 優先，額度不足降級至 flash-lite
+             （交易決策、每日簡報）
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
-from app.providers.ai.schemas import AnalysisReport, BatchAnalysisResult
+from app.providers.ai.schemas import BatchAnalysisResult
 
 
 @dataclass(frozen=True)
@@ -30,11 +31,6 @@ class AIProvider(ABC):
     @abstractmethod
     async def analyze_batch(self, contexts: list[AnalysisContext]) -> BatchAnalysisResult:
         """批次分析多檔（例行）。實作須記錄 ai_usage_log。"""
-        ...
-
-    @abstractmethod
-    async def analyze_deep(self, context: AnalysisContext) -> AnalysisReport:
-        """單檔深度分析。"""
         ...
 
 

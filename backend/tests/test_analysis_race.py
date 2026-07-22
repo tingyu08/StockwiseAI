@@ -316,33 +316,3 @@ async def test_run_batch_rebuilds_when_input_context_changes(monkeypatch):
         assert rows[0].input_hash
     finally:
         db.close()
-
-
-async def test_run_deep_unique_conflict_returns_existing(monkeypatch):
-    """深度分析 commit 撞 UNIQUE：回傳既有報告而非 500。"""
-    db = SessionLocal()
-    try:
-        stock = _seed_stock(db, "9005")
-        trade_date = analysis_service._last_trade_date(db, stock)
-
-        async def fake_analyze_deep(_db, context):
-            other = SessionLocal()
-            other.add(AiReport(stock_id=stock.id, trade_date=trade_date, provider="test",
-                               model="other", prompt_version="v1", kind="deep",
-                               action="hold", confidence=0.5,
-                               payload_json=_report(stock.symbol).model_dump_json()))
-            other.commit()
-            other.close()
-            return _report(stock.symbol), "fake"
-
-        monkeypatch.setattr("app.providers.ai.router.analyze_deep", fake_analyze_deep)
-
-        result = await analysis_service.run_deep(db, stock)
-
-        assert result.model == "other"
-        rows = db.execute(
-            select(AiReport).where(AiReport.stock_id == stock.id, AiReport.kind == "deep")
-        ).scalars().all()
-        assert len(rows) == 1
-    finally:
-        db.close()

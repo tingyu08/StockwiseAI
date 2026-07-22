@@ -29,8 +29,8 @@ export function useUsage() {
   });
 }
 
-// 註：後端另有 analysis:deep（3.6 Flash 深度分析），但個股頁的深度分析
-// 按鈕已移除，前端無入口，故此處只保留 routine。要重新啟用時再加回。
+// deep（單檔深度分析）已整條移除；資料庫既有的 deep 報告仍可讀取顯示，
+// 但不再產生新的。故此處只有 routine。
 function useRunAnalysis(kind: "routine", symbol: string) {
   const market = useMarketStore((s) => s.market);
   const qc = useQueryClient();

@@ -67,14 +67,6 @@ class GeminiProvider(AIProvider):
         ensure_quota(self.db, self.model_name)
         return await self._generate(prompt, output_model)
 
-    async def analyze_deep(self, context: AnalysisContext) -> AnalysisReport:
-        ensure_quota(self.db, self.model_name)
-        prompt = (
-            "請對以下這一檔股票做深度分析，特別注意各指標間的背離與量價關係。\n\n"
-            + self._context_block(context)
-        )
-        return await self._generate(prompt, AnalysisReport)
-
     # ---- internals ----
 
     def _batch_prompt(self, contexts: list[AnalysisContext]) -> str:

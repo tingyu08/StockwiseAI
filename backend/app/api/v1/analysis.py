@@ -90,18 +90,6 @@ async def run_routine(
     return ok(analysis_service.report_dto(report))
 
 
-@router.post("/stocks/{symbol}/analysis:deep", response_model=Envelope)
-async def run_deep(
-    symbol: str,
-    market: Literal["TW", "US"] = Query(...),
-    db: Session = Depends(get_db),
-) -> Envelope:
-    """深度分析（3.5-flash，20 RPD 稀缺額度，額度盡回 429）。"""
-    stock = _get_stock(db, market, symbol)
-    report = await analysis_service.run_deep(db, stock)
-    return ok(analysis_service.report_dto(report))
-
-
 @router.get("/stocks/{symbol}/news", response_model=Envelope)
 async def get_news(
     symbol: str,
