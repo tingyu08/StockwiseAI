@@ -8,7 +8,7 @@ from dataclasses import asdict
 from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -223,9 +223,10 @@ async def _run_overview(db: Session, market: str, force: bool = False) -> "AiOve
     if not stocks:
         raise NotFoundError("自選清單為空，請先加入股票")
 
-    trade_date = max(
-        (d for s in stocks if (d := _last_trade_date(db, s)) is not None), default=None
-    )
+    # 一次撈齊最後交易日與各檔報告：逐檔查詢在整份自選清單上會放大成
+    # 上百次 DB 往返（每檔 1 次日期 ＋ 每種 kind 各 1 次報告與 1 次日期）
+    last_dates = _last_trade_dates(db, stocks)
+    trade_date = max(last_dates.values(), default=None)
     if trade_date is None:
         raise NotFoundError("尚無價格資料，請先同步")
 
@@ -238,9 +239,11 @@ async def _run_overview(db: Session, market: str, force: bool = False) -> "AiOve
     market_ctx = await build_market_context(market)
 
     # 3) 各股詳細摘要（昨日表現＋AI 報告全項）
+    # run_batch 剛寫入當日報告，重新撈一次才拿得到
+    reports = _latest_reports(db, stocks, _last_trade_dates(db, stocks))
     lines = []
     for stock in stocks:
-        report = latest_report(db, stock, kinds=("deep", "routine"))
+        report = reports.get(stock.id)
         chg = _yesterday_change(db, stock)
         if report is None:
             lines.append(f"- {stock.symbol} {stock.name}：{chg}｜（尚無 AI 報告）")
@@ -373,6 +376,48 @@ def _last_trade_date(db: Session, stock: Stock) -> date | None:
         .order_by(DailyPrice.date.desc())
         .limit(1)
     ).scalar_one_or_none()
+
+
+def _last_trade_dates(db: Session, stocks: Sequence[Stock]) -> dict[int, date]:
+    """一次撈齊多檔的最後交易日（取代逐檔 _last_trade_date）。"""
+    ids = [s.id for s in stocks]
+    if not ids:
+        return {}
+    rows = db.execute(
+        select(DailyPrice.stock_id, func.max(DailyPrice.date))
+        .where(DailyPrice.stock_id.in_(ids))
+        .group_by(DailyPrice.stock_id)
+    ).all()
+    return {stock_id: last_date for stock_id, last_date in rows if last_date}
+
+
+def _latest_reports(
+    db: Session,
+    stocks: Sequence[Stock],
+    last_dates: dict[int, date],
+    kinds: tuple[str, ...] = ("deep", "routine"),
+) -> dict[int, AiReport]:
+    """一次撈齊多檔在各自最後交易日的報告，deep 優先於同日 routine。
+
+    等價於逐檔呼叫 latest_report，但把 N×(kinds+1) 次查詢壓成 1 次——
+    簡報要對整份自選清單跑，逐檔查詢會放大成上百次往返。
+    """
+    pairs = [(s.id, last_dates[s.id]) for s in stocks if s.id in last_dates]
+    if not pairs:
+        return {}
+    rows = db.execute(
+        select(AiReport).where(
+            AiReport.kind.in_(kinds),
+            tuple_(AiReport.stock_id, AiReport.trade_date).in_(pairs),
+        )
+    ).scalars().all()
+    priority = {kind: index for index, kind in enumerate(kinds)}
+    best: dict[int, AiReport] = {}
+    for report in rows:
+        current = best.get(report.stock_id)
+        if current is None or priority[report.kind] < priority[current.kind]:
+            best[report.stock_id] = report
+    return best
 
 
 def _report_exists(

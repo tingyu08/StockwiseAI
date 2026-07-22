@@ -41,6 +41,35 @@ def _retry_delay(retry_index: int) -> float:
     """Return 1s, 2s, ... exponential backoff with up to 250ms jitter."""
     return (2**retry_index) + random.uniform(0, 0.25)
 
+
+MAX_RETRY_AFTER_SEC = 30.0
+
+
+def _parse_retry_delay(response: httpx.Response) -> float | None:
+    """從 429 回應取出 Google 建議的等待秒數（RetryInfo.retryDelay，如 "7s"）。
+
+    取不到或超過上限就回 None，由呼叫端退回一般的指數退避——排程任務
+    不該為了一次限流卡住好幾分鐘。
+    """
+    try:
+        details = (response.json().get("error") or {}).get("details") or []
+    except ValueError:
+        return None
+    for detail in details:
+        if not isinstance(detail, dict):
+            continue
+        if "RetryInfo" not in str(detail.get("@type", "")):
+            continue
+        raw = str(detail.get("retryDelay", "")).removesuffix("s")
+        try:
+            seconds = float(raw)
+        except ValueError:
+            return None
+        if 0 <= seconds <= MAX_RETRY_AFTER_SEC:
+            return seconds
+        return None
+    return None
+
 SYSTEM_PROMPT = """你是一位嚴謹的量化股票分析師。根據提供的技術面、籌碼面與新聞面資料產出分析。
 規則：
 - 只根據提供的資料判斷，不虛構資訊
@@ -531,6 +560,23 @@ class GeminiProvider(AIProvider):
                 )
             if res.status_code == 429:
                 self._settle_reservation()
+                # 本地 RPM 計數是以自家 log 推估的，與 Google 端難免漂移；
+                # 短暫退避後重試多半能過。Google 的 429 會在 RetryInfo 帶
+                # retryDelay，有就照它等，沒有就走既有的指數退避。
+                retry_after = _parse_retry_delay(res)
+                if attempt < max_attempts:
+                    delay = retry_after if retry_after is not None else _retry_delay(attempt_index)
+                    logger.warning(
+                        "Gemini rate limited model=%s attempt=%d/%d "
+                        "retry_in_seconds=%.3f source=%s",
+                        self.model_name,
+                        attempt,
+                        max_attempts,
+                        delay,
+                        "retryDelay" if retry_after is not None else "backoff",
+                    )
+                    await _sleep(delay)
+                    continue
                 # 語意上這就是額度用盡：QuotaExceededError→HTTP 429，
                 # 用 UpstreamError 會讓使用者看到 502「上游錯誤」。
                 # router 兩者都會攔截，降級行為不變。
@@ -595,34 +641,52 @@ class GeminiProvider(AIProvider):
 
 
 def _to_gemini_schema(schema: dict) -> dict:
-    """Pydantic JSON Schema → Gemini responseSchema（展開 $ref、拿掉不支援欄位）。"""
+    """Pydantic JSON Schema → Gemini responseSchema（展開 $ref、拿掉不支援欄位）。
+
+    數值/長度/陣列約束會一併帶過去：Gemini 的 responseSchema 支援
+    minimum/maximum/minItems/maxItems/minLength/maxLength，丟掉它們等於
+    讓模型端毫無約束，每次違規都要多耗一次 repair 呼叫才被 Pydantic 擋下
+    （3.6-flash 只有 20 RPD，一次 repair 的代價很高）。
+    """
     defs = schema.get("$defs", {})
 
-    def resolve(node: dict) -> dict:
+    def resolve(node: dict, seen: frozenset[str] = frozenset()) -> dict:
         if "$ref" in node:
             name = node["$ref"].split("/")[-1]
-            return resolve(defs[name])
+            if name in seen:  # 自我參照的 schema 會無限遞迴
+                return {"type": "OBJECT"}
+            return resolve(defs[name], seen | {name})
         out: dict = {}
         node_type = node.get("type")
         if "anyOf" in node:  # Optional[...] → 取第一個非 null 型別
             non_null = [n for n in node["anyOf"] if n.get("type") != "null"]
-            return resolve(non_null[0]) if non_null else {"type": "STRING"}
+            return resolve(non_null[0], seen) if non_null else {"type": "STRING"}
         if node_type == "object":
             out["type"] = "OBJECT"
-            out["properties"] = {k: resolve(v) for k, v in node.get("properties", {}).items()}
+            out["properties"] = {
+                k: resolve(v, seen) for k, v in node.get("properties", {}).items()
+            }
             if node.get("required"):
                 out["required"] = node["required"]
         elif node_type == "array":
             out["type"] = "ARRAY"
-            out["items"] = resolve(node.get("items", {}))
+            out["items"] = resolve(node.get("items", {}), seen)
+            _copy_keys(node, out, {"minItems": "minItems", "maxItems": "maxItems"})
         elif node_type == "string":
             out["type"] = "STRING"
             if "enum" in node:
                 out["enum"] = node["enum"]
-        elif node_type == "number":
-            out["type"] = "NUMBER"
-        elif node_type == "integer":
-            out["type"] = "INTEGER"
+            _copy_keys(node, out, {"minLength": "minLength", "maxLength": "maxLength"})
+        elif node_type in ("number", "integer"):
+            out["type"] = "NUMBER" if node_type == "number" else "INTEGER"
+            _copy_keys(node, out, {"minimum": "minimum", "maximum": "maximum"})
+            # Gemini 不認 exclusiveMinimum/Maximum：降級成含端點的界限。
+            # 略為寬鬆（gt=0 變成 >=0），但仍擋掉負值這個主要失敗樣態，
+            # 真正的嚴格檢查還是由 Pydantic 把關。
+            if "exclusiveMinimum" in node and "minimum" not in out:
+                out["minimum"] = node["exclusiveMinimum"]
+            if "exclusiveMaximum" in node and "maximum" not in out:
+                out["maximum"] = node["exclusiveMaximum"]
         elif node_type == "boolean":
             out["type"] = "BOOLEAN"
         else:
@@ -630,3 +694,9 @@ def _to_gemini_schema(schema: dict) -> dict:
         return out
 
     return resolve(schema)
+
+
+def _copy_keys(src: dict, dst: dict, mapping: dict[str, str]) -> None:
+    for src_key, dst_key in mapping.items():
+        if src_key in src:
+            dst[dst_key] = src[src_key]

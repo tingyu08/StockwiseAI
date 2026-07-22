@@ -200,3 +200,43 @@ def test_backtest_window_excludes_indicator_warmup():
         )
     finally:
         db.close()
+
+
+def test_win_rate_uses_net_pnl_consistent_with_equity():
+    """勝率必須與含費的 equity 曲線同一把尺。
+
+    台股單筆來回約 0.585%（買 0.1425%＋賣 0.4425%）以內的正毛報酬
+    其實是淨虧損；以毛報酬判定會把它算成勝場，勝率與權益表現對不上。
+    """
+    from app.services.backtest_service import _net_pnl_pct
+
+    # 毛報酬 +0.3%（<0.585% 來回成本）→ 淨其實是虧的
+    net = _net_pnl_pct("TW", 100.0, 100.3)
+    assert net < 0, f"毛 +0.3% 在台股應為淨虧損，實得 {net}%"
+
+    # 毛報酬 +2% 足以覆蓋成本 → 仍是勝場，但淨值低於毛值
+    net_win = _net_pnl_pct("TW", 100.0, 102.0)
+    assert 0 < net_win < 2.0
+
+    # 美股零手續費 → 淨＝毛
+    assert _net_pnl_pct("US", 100.0, 102.0) == pytest.approx(2.0, abs=0.01)
+
+
+def test_backtest_win_rate_excludes_fee_only_wins():
+    """端到端：微幅獲利的交易不該被算進勝率。"""
+    db = SessionLocal()
+    try:
+        # 讓 MA 交叉產生數筆微幅獲利的來回
+        closes = []
+        for cycle in range(6):
+            closes += [100.0] * 12 + [100.3] * 12  # 每次波動僅 +0.3%
+        _seed(db, "7302", closes)
+        result = run_backtest(db, "TW", "7302", "ma_cross", range_days=365)
+
+        for trade in result["trades"]:
+            if trade["pnl_pct"] is not None:
+                # 毛報酬最多 +0.3%，扣掉 0.585% 成本後不可能有正的淨報酬
+                assert trade["pnl_pct"] <= 0, f"淨報酬不該為正：{trade['pnl_pct']}%"
+        assert (result["metrics"]["win_rate_pct"] or 0) == 0
+    finally:
+        db.close()

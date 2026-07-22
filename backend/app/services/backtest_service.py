@@ -142,7 +142,7 @@ def _simulate(
                 cash = gross * (1 - _fee_rate(market, "sell"))
                 trades.append(Trade(
                     entry[0], entry[1], df["date"].iloc[i].isoformat(), execution_price,
-                    round((execution_price / entry[1] - 1) * 100, 2) if entry else None,
+                    _net_pnl_pct(market, entry[1], execution_price) if entry else None,
                 ))
                 qty = 0.0
                 entry = None
@@ -156,7 +156,7 @@ def _simulate(
         last_close = df["close"].iloc[-1]
         open_position = Trade(
             entry[0], entry[1], None, None,
-            round((last_close / entry[1] - 1) * 100, 2),
+            _net_pnl_pct(market, entry[1], last_close),
         )
 
     equities = [p["equity"] for p in equity_curve]
@@ -187,6 +187,19 @@ def _simulate(
         "open_position": open_position.__dict__ if open_position else None,
         "disclaimer": "回測基於歷史資料與簡化假設，不代表未來績效",
     }
+
+
+def _net_pnl_pct(market: str, entry_price: float, exit_price: float) -> float:
+    """單筆含手續費的淨報酬率（%）。
+
+    毛報酬會讓 win_rate 與 equity 曲線不一致：台股單筆來回約 0.585%
+    （買 0.1425% ＋ 賣 0.4425%）以內的正毛報酬其實是淨虧損，卻會被
+    算成一筆勝場。equity 曲線本來就是含費淨值，兩者必須同一把尺。
+    """
+    buy_fee = _fee_rate(market, "buy")
+    sell_fee = _fee_rate(market, "sell")
+    net_multiple = (1 - buy_fee) * (1 - sell_fee) * exit_price / entry_price
+    return round((net_multiple - 1) * 100, 2)
 
 
 def _fee_rate(market: str, side: str) -> float:

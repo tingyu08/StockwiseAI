@@ -174,3 +174,75 @@ def test_positions_dto_query_count_does_not_grow_with_positions(client):
             db.execute(delete(Stock).where(Stock.id.in_(stock_ids)))
             db.commit()
         db.close()
+
+
+def test_overview_helpers_batch_instead_of_per_stock_queries():
+    """簡報要對整份自選清單跑：逐檔查詢會放大成上百次 DB 往返。
+
+    每檔原本需要 1 次最後交易日 ＋ 每種 kind 各 1 次報告與 1 次日期，
+    18 檔就是上百次。批次版必須各只用 1 次查詢，且結果與逐檔等價。
+    """
+    import json
+
+    from app.models import AiReport
+    from app.services.analysis_service import (
+        _last_trade_dates,
+        _latest_reports,
+        latest_report,
+    )
+
+    db = SessionLocal()
+    stocks = []
+    try:
+        for i in range(5):
+            stock = Stock(
+                symbol=f"OVW{i}", market="TW", name=f"總評 {i}",
+                currency="TWD", kind="stock",
+            )
+            db.add(stock)
+            db.flush()
+            db.add(DailyPrice(
+                stock_id=stock.id, date=date(2026, 7, 20),
+                open=100, high=101, low=99, close=100 + i, volume=1000,
+            ))
+            db.add(AiReport(
+                stock_id=stock.id, trade_date=date(2026, 7, 20),
+                provider="gemini", model="m", prompt_version="v2", kind="routine",
+                action="hold", confidence=0.5,
+                payload_json=json.dumps({"action": "hold"}),
+            ))
+            stocks.append(stock)
+        db.commit()
+
+        counts = {"n": 0}
+
+        def count(conn, cursor, statement, params, context, executemany):
+            counts["n"] += 1
+
+        event.listen(engine, "before_cursor_execute", count)
+        try:
+            last_dates = _last_trade_dates(db, stocks)
+            after_dates = counts["n"]
+            reports = _latest_reports(db, stocks, last_dates)
+            after_reports = counts["n"]
+        finally:
+            event.remove(engine, "before_cursor_execute", count)
+
+        assert after_dates == 1, f"最後交易日用了 {after_dates} 次查詢"
+        assert after_reports - after_dates == 1, (
+            f"報告撈取用了 {after_reports - after_dates} 次查詢"
+        )
+
+        # 與逐檔版等價
+        assert len(last_dates) == 5
+        for stock in stocks:
+            expected = latest_report(db, stock, kinds=("deep", "routine"))
+            assert reports.get(stock.id) and expected
+            assert reports[stock.id].id == expected.id
+    finally:
+        for stock in stocks:
+            db.execute(delete(AiReport).where(AiReport.stock_id == stock.id))
+            db.execute(delete(DailyPrice).where(DailyPrice.stock_id == stock.id))
+            db.delete(stock)
+        db.commit()
+        db.close()
