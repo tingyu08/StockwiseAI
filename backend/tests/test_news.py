@@ -1,5 +1,8 @@
 """新聞面研究模組：快取、管線注入、API。Antigravity 呼叫一律 mock。"""
 import json
+
+import pytest
+from types import SimpleNamespace
 from datetime import date, timedelta
 
 from app.core.db import SessionLocal
@@ -212,3 +215,96 @@ async def test_news_job_stops_on_quota(monkeypatch):
     assert result["researched"] == 1
     assert len(calls) == 2  # 第二檔遇到額度盡即 break，第三檔不再呼叫
     assert result["failed"] == []
+
+
+# ---- Antigravity 額度與韌性 ----
+
+async def test_antigravity_429_stops_the_batch(monkeypatch):
+    """429 必須是 QuotaExceededError，news job 才會提前收工。
+
+    若丟 UpstreamError，jobs.py 的 except Exception 會吞掉並繼續逐檔
+    轟炸一個已在限流的 API。
+    """
+    from app.core.exceptions import QuotaExceededError
+    from app.models import WatchlistItem
+    from app.providers.ai import antigravity
+    from app.scheduler.jobs import news_research_daily
+
+    calls = {"n": 0}
+
+    class _RateLimited:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, *args, **kwargs):
+            calls["n"] += 1
+            return SimpleNamespace(
+                status_code=429, text="rate limited", json=lambda: {}
+            )
+
+    monkeypatch.setattr(antigravity.httpx, "AsyncClient", _RateLimited)
+
+    db = SessionLocal()
+    try:
+        for sym in ("7401", "7402", "7403"):
+            stock = _seed_stock(db, sym)
+            db.add(WatchlistItem(stock_id=stock.id, ai_managed=True))
+        db.commit()
+    finally:
+        db.close()
+
+    # provider 層應丟 QuotaExceededError
+    with pytest.raises(QuotaExceededError):
+        await antigravity.AntigravityProvider(SessionLocal()).research_news(
+            "7401", "測試", "TW"
+        )
+
+    before = calls["n"]
+    result = await news_research_daily("TW")
+    # 關鍵斷言：撞 429 後立刻 break，不會對其餘每一檔再打一次
+    # （researched 可能 >0——共用測試 DB 中較早的股票已有當日快取，
+    #   走快取不會呼叫 Antigravity，與本次驗證的行為無關）
+    assert calls["n"] - before == 1, f"限流後仍繼續呼叫 {calls['n'] - before} 次"
+    assert result["failed"] == []  # 限流是提前收工，不是逐檔失敗
+
+
+async def test_antigravity_reserves_realistic_token_estimate(monkeypatch):
+    """預約要帶合理的 token 估計，否則 TPM 防線對 in-flight 任務失效。"""
+    from app.providers.ai import antigravity
+
+    captured = {}
+
+    def fake_reserve(db, model, estimated_tokens=0):
+        captured["tokens"] = estimated_tokens
+        return 1
+
+    monkeypatch.setattr(antigravity, "reserve_quota", fake_reserve)
+    monkeypatch.setattr(antigravity, "finalize_quota", lambda *a, **k: None)
+    monkeypatch.setattr(antigravity, "cancel_quota", lambda *a, **k: None)
+
+    async def fake_create(self, prompt):
+        return {"id": "x", "status": "completed"}
+
+    async def fake_wait(self, interaction):
+        return {"status": "completed", "usage": {},
+                "steps": [{"type": "model_output",
+                           "content": [{"text": "摘要", "type": "text"}]}]}
+
+    monkeypatch.setattr(antigravity.AntigravityProvider, "_create", fake_create)
+    monkeypatch.setattr(antigravity.AntigravityProvider, "_wait", fake_wait)
+
+    db = SessionLocal()
+    try:
+        await antigravity.AntigravityProvider(db).research_news("2330", "台積電", "TW")
+    finally:
+        db.close()
+
+    assert captured["tokens"] >= 10_000, (
+        f"預約只估了 {captured['tokens']} tokens，實測單次任務約 34K"
+    )
