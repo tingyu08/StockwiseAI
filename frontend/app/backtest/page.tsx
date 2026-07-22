@@ -33,7 +33,11 @@ interface BacktestResult {
     beats_buy_hold: number;
     sharpe_ratio: number | null;
   };
-  assumptions: { slippage_bps: number };
+  assumptions: {
+    slippage_bps: number;
+    buy_fee_pct?: number;
+    sell_fee_pct?: number;
+  };
   equity_curve: { date: string; equity: number }[];
   trades: {
     entry_date: string;
@@ -209,6 +213,15 @@ export default function BacktestPage() {
 
           <section className="overflow-x-auto rounded-xl border border-neutral-200 dark:border-neutral-800">
             <h3 className="px-5 pt-4 text-sm font-medium text-neutral-500">交易明細（最近 50 筆）</h3>
+            <p className="px-5 pt-1 text-xs text-neutral-400">
+              假設：滑價 {result.assumptions.slippage_bps} bps
+              {result.assumptions.buy_fee_pct != null && (
+                <>
+                  ｜買進 {result.assumptions.buy_fee_pct}%、
+                  賣出 {result.assumptions.sell_fee_pct}%（含稅）
+                </>
+              )}
+            </p>
             <table className="mt-2 w-full text-sm">
               <thead>
                 <tr className="border-b border-neutral-200 text-left text-neutral-500 dark:border-neutral-800">
@@ -216,7 +229,9 @@ export default function BacktestPage() {
                   <th className="px-5 py-2 text-right">進場價</th>
                   <th className="px-5 py-2">出場</th>
                   <th className="px-5 py-2 text-right">出場價</th>
-                  <th className="px-5 py-2 text-right">損益</th>
+                  {/* 標明含費：淨損益不等於（出場價/進場價-1），
+                      不寫的話使用者拿同一列的兩個價格自算會對不上 */}
+                  <th className="px-5 py-2 text-right">損益（含手續費）</th>
                 </tr>
               </thead>
               <tbody>

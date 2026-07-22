@@ -152,11 +152,15 @@ def _simulate(
         )
 
     open_position = None
-    if entry is not None:  # 期末未平倉：以最後收盤計未實現
+    if entry is not None:
+        # 期末未平倉＝逐日盯市，與 equity_curve 同一把尺（只含已付出的
+        # 買進成本）。若在此扣賣出費，就會變成第三種定義：既不等於
+        # equity 也不等於已平倉交易的淨值，反而更難解讀。
         last_close = df["close"].iloc[-1]
+        buy_fee = _fee_rate(market, "buy")
         open_position = Trade(
             entry[0], entry[1], None, None,
-            _net_pnl_pct(market, entry[1], last_close),
+            round(((1 - buy_fee) * last_close / entry[1] - 1) * 100, 2),
         )
 
     equities = [p["equity"] for p in equity_curve]
@@ -181,7 +185,12 @@ def _simulate(
             "beats_buy_hold": round(total_return - buy_hold, 2),
             "sharpe_ratio": _sharpe_ratio(equities),
         },
-        "assumptions": {"slippage_bps": slippage_bps},
+        "assumptions": {
+            "slippage_bps": slippage_bps,
+            # 損益/勝率都是含費淨值，UI 需揭露否則使用者拿進出場價自算會對不上
+            "buy_fee_pct": round(_fee_rate(market, "buy") * 100, 4),
+            "sell_fee_pct": round(_fee_rate(market, "sell") * 100, 4),
+        },
         "equity_curve": equity_curve,
         "trades": [t.__dict__ for t in closed[-50:]],
         "open_position": open_position.__dict__ if open_position else None,

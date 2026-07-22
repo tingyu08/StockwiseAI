@@ -232,3 +232,131 @@ def test_validate_configured_models_catches_typo(monkeypatch):
     monkeypatch.setattr(ai_router, "ROUTINE_CHAIN", ["gemini-3.5-flash-litee"])
     with pytest.raises(ValueError, match="quotas.yaml 缺少模型設定"):
         ai_router.validate_configured_models()
+
+
+# ---- 429 重試的額度帳（覆核抓到的迴歸）----
+
+def _rate_limited_client(body: dict, calls: list):
+    import httpx
+
+    class _Client:
+        def __init__(self, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def post(self, *args, **kwargs):
+            calls.append(1)
+            return httpx.Response(429, json=body)
+
+    return _Client
+
+
+async def test_429_retry_records_only_one_usage_row(monkeypatch):
+    """重試不得把一次邏輯呼叫記成多次用量。
+
+    每輪都 settle 的話，rpd 只有 20 的模型一次 429 就被記成用掉 3 次
+    （15% 當日額度），額度帳反而比不重試更糟。
+    """
+    import httpx
+
+    from app.core.db import SessionLocal
+    from app.core.exceptions import QuotaExceededError
+    from app.models.analysis import AiQuotaReservation, AiUsageLog
+    from app.providers.ai import gemini as gemini_mod
+    from app.providers.ai.gemini import GeminiProvider
+    from app.providers.ai.schemas import BatchAnalysisResult
+
+    model = "gemini-3.5-flash-lite"
+    calls: list = []
+    monkeypatch.setattr(httpx, "AsyncClient", _rate_limited_client({}, calls))
+    monkeypatch.setattr(gemini_mod, "_sleep", lambda _s: asyncio_sleep_zero())
+
+    db = SessionLocal()
+    try:
+        before_usage = db.query(AiUsageLog).filter(AiUsageLog.model == model).count()
+        before_res = db.query(AiQuotaReservation).count()
+
+        with pytest.raises(QuotaExceededError):
+            await GeminiProvider(model, db)._call_api("prompt", BatchAnalysisResult)
+
+        after_usage = db.query(AiUsageLog).filter(AiUsageLog.model == model).count()
+        assert len(calls) > 1, "應該有重試"
+        assert after_usage - before_usage == 1, (
+            f"一次呼叫寫了 {after_usage - before_usage} 筆用量（重試被重複計費）"
+        )
+        assert db.query(AiQuotaReservation).count() == before_res, "預約沒被清乾淨"
+    finally:
+        db.close()
+
+
+async def asyncio_sleep_zero():
+    return None
+
+
+async def test_429_with_long_retry_delay_gives_up_immediately(monkeypatch):
+    """Google 要求的等待超過上限時必須放棄，不可退回更短的指數退避。"""
+    import httpx
+
+    from app.core.db import SessionLocal
+    from app.core.exceptions import QuotaExceededError
+    from app.providers.ai import gemini as gemini_mod
+    from app.providers.ai.gemini import GeminiProvider
+    from app.providers.ai.schemas import BatchAnalysisResult
+
+    body = {
+        "error": {
+            "details": [
+                {"@type": "type.googleapis.com/google.rpc.RetryInfo",
+                 "retryDelay": "51s"}
+            ]
+        }
+    }
+    calls: list = []
+    monkeypatch.setattr(httpx, "AsyncClient", _rate_limited_client(body, calls))
+    monkeypatch.setattr(gemini_mod, "_sleep", lambda _s: asyncio_sleep_zero())
+
+    db = SessionLocal()
+    try:
+        with pytest.raises(QuotaExceededError):
+            await GeminiProvider("gemini-3.5-flash-lite", db)._call_api(
+                "prompt", BatchAnalysisResult
+            )
+        assert len(calls) == 1, (
+            f"Google 要求等 51 秒，卻仍重打了 {len(calls)} 次"
+        )
+    finally:
+        db.close()
+
+
+def test_parse_retry_delay_handles_malformed_bodies():
+    """非 dict 的合法 JSON 不可拋 AttributeError——會逃出 router 的降級鏈。"""
+    import httpx
+
+    from app.providers.ai.gemini import (
+        MIN_RETRY_AFTER_SEC,
+        TOO_LONG,
+        _parse_retry_delay,
+    )
+
+    def parse(payload):
+        return _parse_retry_delay(httpx.Response(429, json=payload))
+
+    assert parse([{"error": {}}]) is None  # 頂層陣列
+    assert parse(None) is None
+    assert parse({"error": "Too Many Requests"}) is None  # error 是字串
+    assert parse({"error": {"details": "nope"}}) is None
+    assert _parse_retry_delay(httpx.Response(429, text="<html>")) is None
+
+    info = "type.googleapis.com/google.rpc.RetryInfo"
+    assert parse({"error": {"details": [{"@type": info, "retryDelay": "7s"}]}}) == 7.0
+    assert parse({"error": {"details": [{"@type": info, "retryDelay": "51s"}]}}) == TOO_LONG
+    assert parse({"error": {"details": [{"@type": info, "retryDelay": "-5s"}]}}) is None
+    # "0s" 要有下限，否則變成零間隔連打
+    assert parse(
+        {"error": {"details": [{"@type": info, "retryDelay": "0s"}]}}
+    ) == MIN_RETRY_AFTER_SEC

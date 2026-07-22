@@ -487,3 +487,52 @@ async def test_batch_accepts_market_prefixed_symbol(monkeypatch):
         db.close()
 
     assert len(result.reports) == 1
+
+
+def test_schema_carries_numeric_and_array_constraints():
+    """數值/陣列約束要送給模型，否則每次違規都要多燒一次 repair。
+
+    但散文欄位刻意不送 minLength/maxLength——responseSchema 是
+    constrained decoding，碰到 maxLength 會直接截斷成剛好合法的
+    半句話，Pydantic 反而擋不下（見 _to_gemini_schema 註解）。
+    """
+    props = _to_gemini_schema(AnalysisReport.model_json_schema())["properties"]
+
+    assert props["confidence"] == {"type": "NUMBER", "minimum": 0, "maximum": 1}
+    assert props["target_price_low"]["minimum"] == 0  # gt=0 降級為 >=0
+    assert props["risks"]["minItems"] == 1
+    assert props["risks"]["maxItems"] == 6
+
+    # 散文欄位不得帶長度約束
+    assert "maxLength" not in props["reasoning"]
+    assert "minLength" not in props["reasoning"]
+    scenario = props["scenarios"]["properties"]["bull"]["properties"]
+    assert "maxLength" not in scenario["trigger_condition"]
+    assert scenario["probability"] == {"type": "NUMBER", "minimum": 0, "maximum": 1}
+
+
+def test_schema_handles_self_referencing_model():
+    """自我參照不可 RecursionError，截斷後也必須是 Gemini 收得下的節點。"""
+    from typing import Optional
+
+    from pydantic import BaseModel
+
+    class Node(BaseModel):
+        name: str
+        child: Optional["Node"] = None
+
+    Node.model_rebuild()
+    schema = _to_gemini_schema(Node.model_json_schema())
+
+    child = schema["properties"]["child"]
+    # 空的 OBJECT（沒有 properties）會被 Gemini 以 HTTP 400 打回
+    assert not (child["type"] == "OBJECT" and not child.get("properties"))
+
+
+def test_diamond_reference_is_not_mistaken_for_a_cycle():
+    """同一個 $ref 在不同分支各出現一次是正常的，不可被循環防護誤傷。"""
+    schema = _to_gemini_schema(AnalysisReport.model_json_schema())
+    scenarios = schema["properties"]["scenarios"]["properties"]
+    for key in ("bull", "base", "bear"):
+        assert scenarios[key]["type"] == "OBJECT"
+        assert "target_price" in scenarios[key]["properties"], f"{key} 被誤截斷"

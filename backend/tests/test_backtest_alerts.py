@@ -223,20 +223,48 @@ def test_win_rate_uses_net_pnl_consistent_with_equity():
 
 
 def test_backtest_win_rate_excludes_fee_only_wins():
-    """端到端：微幅獲利的交易不該被算進勝率。"""
-    db = SessionLocal()
-    try:
-        # 讓 MA 交叉產生數筆微幅獲利的來回
-        closes = []
-        for cycle in range(6):
-            closes += [100.0] * 12 + [100.3] * 12  # 每次波動僅 +0.3%
-        _seed(db, "7302", closes)
-        result = run_backtest(db, "TW", "7302", "ma_cross", range_days=365)
+    """毛正、淨負的交易不可算進勝率。
 
-        for trade in result["trades"]:
-            if trade["pnl_pct"] is not None:
-                # 毛報酬最多 +0.3%，扣掉 0.585% 成本後不可能有正的淨報酬
-                assert trade["pnl_pct"] <= 0, f"淨報酬不該為正：{trade['pnl_pct']}%"
-        assert (result["metrics"]["win_rate_pct"] or 0) == 0
-    finally:
-        db.close()
+    直接餵人工 df/signals：進場 100、出場 100.4（毛 +0.4%），
+    低於台股來回成本 0.585% → 淨必為負。用真實策略資料造不出這種
+    交易（訊號慢一天會買高賣低，毛報酬本來就是負的），那樣的測試
+    即使改回毛報酬公式也照樣綠，等於沒有守住任何東西。
+    """
+    df = pd.DataFrame({
+        "date": [date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 3)],
+        "open": [100.0, 100.0, 100.4],
+        "close": [100.0, 100.0, 100.4],
+    })
+
+    result = _simulate("TW", df, [1, 0, 0], "ma_cross")
+
+    assert result["metrics"]["trades"] == 1
+    trade = result["trades"][0]
+    gross = (trade["exit_price"] / trade["entry_price"] - 1) * 100
+    assert gross > 0, "測資本身必須是毛報酬為正，否則測不到重點"
+    assert trade["pnl_pct"] < 0, f"毛 +{gross:.2f}% 扣費後應為負，實得 {trade['pnl_pct']}%"
+
+    assert result["metrics"]["win_rate_pct"] is not None
+    assert result["metrics"]["win_rate_pct"] == 0
+    # 與含費的權益曲線同向
+    assert result["metrics"]["total_return_pct"] < 0
+
+
+def test_open_position_uses_same_yardstick_as_equity_curve():
+    """未平倉部位＝逐日盯市，必須與 equity_curve 對得起來。
+
+    若在此扣賣出費就成了第三種定義：既不等於 equity，也不等於
+    已平倉交易的淨值。
+    """
+    df = pd.DataFrame({
+        "date": [date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 3)],
+        "open": [100.0, 100.0, 105.0],
+        "close": [100.0, 105.0, 110.0],
+    })
+
+    result = _simulate("TW", df, [1, 1, 1], "ma_cross")
+
+    final_equity = result["equity_curve"][-1]["equity"]
+    assert result["open_position"]["pnl_pct"] == pytest.approx(
+        (final_equity - 1) * 100, abs=0.01
+    )

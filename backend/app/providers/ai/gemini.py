@@ -45,15 +45,32 @@ def _retry_delay(retry_index: int) -> float:
 MAX_RETRY_AFTER_SEC = 30.0
 
 
-def _parse_retry_delay(response: httpx.Response) -> float | None:
+TOO_LONG = "too_long"
+MIN_RETRY_AFTER_SEC = 1.0
+
+
+def _parse_retry_delay(response: httpx.Response) -> float | str | None:
     """從 429 回應取出 Google 建議的等待秒數（RetryInfo.retryDelay，如 "7s"）。
 
-    取不到或超過上限就回 None，由呼叫端退回一般的指數退避——排程任務
-    不該為了一次限流卡住好幾分鐘。
+    回傳值三態：
+      float     照這個秒數等
+      TOO_LONG  Google 要求的等待超過上限 → 直接放棄，不可退回短退避
+      None      回應裡沒有 RetryInfo → 由呼叫端走指數退避
+
+    「等不起」必須是別重試，不是更快重試：若把超上限壓成 None，
+    「Google 說等 51 秒」會退化成 1 秒後重打，比不重試還糟。
     """
     try:
-        details = (response.json().get("error") or {}).get("details") or []
+        payload = response.json()
     except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None  # 合法 JSON 但非物件（陣列/null/字串）
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    details = error.get("details")
+    if not isinstance(details, list):
         return None
     for detail in details:
         if not isinstance(detail, dict):
@@ -65,9 +82,12 @@ def _parse_retry_delay(response: httpx.Response) -> float | None:
             seconds = float(raw)
         except ValueError:
             return None
-        if 0 <= seconds <= MAX_RETRY_AFTER_SEC:
-            return seconds
-        return None
+        if seconds < 0:
+            return None
+        if seconds > MAX_RETRY_AFTER_SEC:
+            return TOO_LONG
+        # "0s" 也要有下限，否則變成對限流中的端點零間隔連打
+        return max(seconds, MIN_RETRY_AFTER_SEC)
     return None
 
 SYSTEM_PROMPT = """你是一位嚴謹的量化股票分析師。根據提供的技術面、籌碼面與新聞面資料產出分析。
@@ -559,13 +579,21 @@ class GeminiProvider(AIProvider):
                     f"{self.model_name} returned 503 after {max_attempts} attempts"
                 )
             if res.status_code == 429:
-                self._settle_reservation()
                 # 本地 RPM 計數是以自家 log 推估的，與 Google 端難免漂移；
-                # 短暫退避後重試多半能過。Google 的 429 會在 RetryInfo 帶
-                # retryDelay，有就照它等，沒有就走既有的指數退避。
+                # 短暫退避後重試多半能過。Google 的 429 會在 RetryInfo 帶 retryDelay。
                 retry_after = _parse_retry_delay(res)
-                if attempt < max_attempts:
-                    delay = retry_after if retry_after is not None else _retry_delay(attempt_index)
+                will_retry = attempt < max_attempts and retry_after != TOO_LONG
+                if will_retry:
+                    # 關鍵：重試路徑要「釋放」而非結算。被限流的請求並未被服務，
+                    # 每輪都 settle 的話一次邏輯呼叫會寫進 max_attempts 筆用量，
+                    # 而 used_today() 直接數 AiUsageLog——rpd 只有 20 的模型
+                    # 一次 429 就會被記成用掉 3 次（15% 當日額度）。
+                    self._release_reservation()
+                    delay = (
+                        retry_after
+                        if isinstance(retry_after, float)
+                        else _retry_delay(attempt_index)
+                    )
                     logger.warning(
                         "Gemini rate limited model=%s attempt=%d/%d "
                         "retry_in_seconds=%.3f source=%s",
@@ -573,10 +601,18 @@ class GeminiProvider(AIProvider):
                         attempt,
                         max_attempts,
                         delay,
-                        "retryDelay" if retry_after is not None else "backoff",
+                        "retryDelay" if isinstance(retry_after, float) else "backoff",
                     )
                     await _sleep(delay)
                     continue
+                self._settle_reservation()  # 放棄：這次確實打到上游了
+                if retry_after == TOO_LONG:
+                    logger.warning(
+                        "Gemini rate limited model=%s；Google 要求的等待超過 %.0f 秒上限，"
+                        "不重試",
+                        self.model_name,
+                        MAX_RETRY_AFTER_SEC,
+                    )
                 # 語意上這就是額度用盡：QuotaExceededError→HTTP 429，
                 # 用 UpstreamError 會讓使用者看到 502「上游錯誤」。
                 # router 兩者都會攔截，降級行為不變。
@@ -654,7 +690,10 @@ def _to_gemini_schema(schema: dict) -> dict:
         if "$ref" in node:
             name = node["$ref"].split("/")[-1]
             if name in seen:  # 自我參照的 schema 會無限遞迴
-                return {"type": "OBJECT"}
+                # 不能回沒有 properties 的 OBJECT——Gemini 會以 HTTP 400 打回，
+                # 症狀比原本的 RecursionError 更難定位。退成 STRING 才收得下。
+                logger.warning("schema 自我參照，已截斷：%s", name)
+                return {"type": "STRING", "description": f"nested {name}"}
             return resolve(defs[name], seen | {name})
         out: dict = {}
         node_type = node.get("type")
@@ -676,7 +715,12 @@ def _to_gemini_schema(schema: dict) -> dict:
             out["type"] = "STRING"
             if "enum" in node:
                 out["enum"] = node["enum"]
-            _copy_keys(node, out, {"minLength": "minLength", "maxLength": "maxLength"})
+            # 刻意不送 minLength/maxLength：responseSchema 是 constrained
+            # decoding，字串一碰到 maxLength 解碼器就直接補引號收尾。
+            # reasoning（500）與 trigger_condition（300）都是散文欄位，
+            # 結果會是剛好卡在上限的半句話——長度合法所以 Pydantic 也擋不下，
+            # 等於把「看得見的 repair 重試」換成「看不見的爛資料」落地。
+            # 字數上限交給 Pydantic 把關即可。
         elif node_type in ("number", "integer"):
             out["type"] = "NUMBER" if node_type == "number" else "INTEGER"
             _copy_keys(node, out, {"minimum": "minimum", "maximum": "maximum"})
