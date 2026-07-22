@@ -18,7 +18,12 @@ from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
 from app.core.exceptions import QuotaExceededError, UpstreamError
-from app.core.rate_limiter import ensure_quota, finalize_quota, reserve_quota
+from app.core.rate_limiter import (
+    cancel_quota,
+    ensure_quota,
+    finalize_quota,
+    reserve_quota,
+)
 from app.providers.ai.base import AIProvider, AnalysisContext
 from app.providers.ai.schemas import AnalysisReport, BatchAnalysisResult
 
@@ -202,13 +207,33 @@ class GeminiProvider(AIProvider):
                     reason,
                 )
 
+        if expected and not valid:
+            # 全空（最典型是模型回 {"reports": []}）不能當成功回傳：
+            # 結構合法 → 沒有 failures → 不觸發修復 → analyzed=0，
+            # 額度已經扣掉，router 卻看不出失敗、也不會降級，使用者端無感。
+            # 部分成功仍照舊回傳（刻意保留的 salvage 行為）。
+            raise UpstreamError(
+                f"{self.model_name} 批次回應未包含任何有效報告"
+                f"（預期 {len(expected)} 檔）"
+            )
+
         return BatchAnalysisResult(
             reports=[valid[symbol] for symbol in expected if symbol in valid]
         )
 
     @staticmethod
     def _normalize_symbol(symbol: object) -> str:
-        return str(symbol or "").strip().upper()
+        """'TW/2330'、'2330 台積電' → '2330'。
+
+        必須與 analysis_service._norm_symbol 同樣寬鬆：_context_block 用
+        【TW/2330】當標頭，本來就會誘導模型回市場前綴。只做 upper() 的話
+        這種回應會在這裡被判 unexpected_symbol 直接丟掉，連服務層的
+        順序兜底都救不到（reports 數量已經對不上）。
+        """
+        text = str(symbol or "").strip().upper()
+        if "/" in text:
+            text = text.split("/")[-1]
+        return text.split()[0] if text else text
 
     @staticmethod
     def _decode_batch_items(raw: str) -> list[object]:
@@ -340,6 +365,39 @@ class GeminiProvider(AIProvider):
         )
 
     async def _call_api(self, prompt: str, output_model: type[BaseModel]) -> str:
+        """送出一次 Gemini 請求（含重試），回傳原始文字。
+
+        額度預約的結算只有兩種正確結局：
+          settle  —— 請求確實送達 Google（無論成敗）→ 轉成不可逆的 usage log
+          release —— 請求從未送出 → 釋放預約，不該佔用額度
+        最外層再包一層 finally 兜底：任何非 httpx 例外（最現實的是關機時的
+        asyncio.CancelledError，它繼承 BaseException，既有的 except 全攔不到）
+        都會讓預約永遠留在 ai_quota_reservations，而 used_today() 把活著的
+        預約計入已用量——等於當天額度被憑空吃掉且無人回收。
+        """
+        self._pending_reservation = None
+        try:
+            return await self._call_api_inner(prompt, output_model)
+        finally:
+            self._release_reservation()
+
+    def _settle_reservation(self, **usage_kwargs) -> None:
+        """請求已送達上游：轉成用量紀錄。"""
+        reservation_id = getattr(self, "_pending_reservation", None)
+        if reservation_id is not None:
+            self._pending_reservation = None
+            finalize_quota(
+                self.db, reservation_id, provider=self.provider_name, **usage_kwargs
+            )
+
+    def _release_reservation(self) -> None:
+        """請求從未送出／結果不可知：釋放預約，不計入額度。"""
+        reservation_id = getattr(self, "_pending_reservation", None)
+        if reservation_id is not None:
+            self._pending_reservation = None
+            cancel_quota(self.db, reservation_id)
+
+    async def _call_api_inner(self, prompt: str, output_model: type[BaseModel]) -> str:
         settings = get_settings()
         generation_config: dict = {
             "responseMimeType": "application/json",
@@ -368,7 +426,7 @@ class GeminiProvider(AIProvider):
         )
         for attempt_index in range(max_attempts):
             attempt = attempt_index + 1
-            reservation_id = reserve_quota(
+            self._pending_reservation = reserve_quota(
                 self.db, self.model_name, estimated_tokens=max(1, len(prompt))
             )
             started = monotonic()
@@ -376,12 +434,21 @@ class GeminiProvider(AIProvider):
                 async with httpx.AsyncClient(timeout=timeout) as client:
                     res = await client.post(
                         f"{BASE_URL}/{self.model_name}:generateContent",
-                        params={"key": settings.gemini_api_key},
+                        # 金鑰走 header 而非 query string：URL 會被反向代理與
+                        # 平台 access log 記錄（本地 log 遮蔽擋不到那一層）。
+                        # 與 antigravity provider 的作法一致。
+                        headers={"x-goog-api-key": settings.gemini_api_key},
                         json=body,
                     )
             except httpx.TimeoutException as exc:
                 elapsed_ms = round((monotonic() - started) * 1000)
-                finalize_quota(self.db, reservation_id, provider=self.provider_name)
+                # ConnectTimeout＝TCP/TLS 都沒建立，請求從未抵達 Google，
+                # 對方不會計數；ReadTimeout 則是已送出只是沒等到回應，要計。
+                # 不分辨的話，一次連線層故障會連續重試 3 次、白燒 3 個 RPD。
+                if isinstance(exc, httpx.ConnectTimeout):
+                    self._release_reservation()
+                else:
+                    self._settle_reservation()
                 logger.warning(
                     "Gemini request model=%s attempt=%d/%d prompt_chars=%d "
                     "elapsed_ms=%d status=timeout error_type=%s",
@@ -408,7 +475,12 @@ class GeminiProvider(AIProvider):
                 ) from exc
             except httpx.HTTPError as exc:
                 elapsed_ms = round((monotonic() - started) * 1000)
-                finalize_quota(self.db, reservation_id, provider=self.provider_name)
+                # ConnectError（DNS 失敗、連線被拒）代表請求從未送出 → 釋放預約；
+                # 其餘傳輸錯誤（如 RemoteProtocolError）已送出過，仍計入用量。
+                if isinstance(exc, httpx.ConnectError):
+                    self._release_reservation()
+                else:
+                    self._settle_reservation()
                 logger.warning(
                     "Gemini request model=%s attempt=%d/%d prompt_chars=%d "
                     "elapsed_ms=%d status=transport_error error_type=%s",
@@ -433,7 +505,7 @@ class GeminiProvider(AIProvider):
                 res.status_code,
             )
             if res.status_code == 503:
-                finalize_quota(self.db, reservation_id, provider=self.provider_name)
+                self._settle_reservation()
                 logger.warning(
                     "Gemini transient failure model=%s attempt=%d/%d prompt_chars=%d "
                     "elapsed_ms=%d status=503",
@@ -458,10 +530,15 @@ class GeminiProvider(AIProvider):
                     f"{self.model_name} returned 503 after {max_attempts} attempts"
                 )
             if res.status_code == 429:
-                finalize_quota(self.db, reservation_id, provider=self.provider_name)
-                raise UpstreamError(f"{self.model_name} was rate limited by Google (429)")
+                self._settle_reservation()
+                # 語意上這就是額度用盡：QuotaExceededError→HTTP 429，
+                # 用 UpstreamError 會讓使用者看到 502「上游錯誤」。
+                # router 兩者都會攔截，降級行為不變。
+                raise QuotaExceededError(
+                    f"{self.model_name} was rate limited by Google (429)"
+                )
             if res.status_code != 200:
-                finalize_quota(self.db, reservation_id, provider=self.provider_name)
+                self._settle_reservation()
                 logger.error(
                     "Gemini request model=%s attempt=%d/%d prompt_chars=%d "
                     "elapsed_ms=%d status=%d response=%s",
@@ -481,20 +558,40 @@ class GeminiProvider(AIProvider):
         try:
             data = res.json()
         except ValueError as exc:
-            finalize_quota(self.db, reservation_id, provider=self.provider_name)
+            self._settle_reservation()
             raise UpstreamError(f"{self.model_name} 回傳無效 JSON") from exc
         usage = data.get("usageMetadata", {})
-        finalize_quota(
-            self.db,
-            reservation_id,
-            provider=self.provider_name,
+        # thoughtsTokenCount 不含在 candidatesTokenCount 內，但 Google 的 TPM
+        # 是以總 token 計；thinkingLevel=high 每次穩定產生數百個推理 token，
+        # 漏記會讓 ensure_quota 的 TPM 防線長期低估用量。
+        output_tokens = usage.get("candidatesTokenCount")
+        thoughts = usage.get("thoughtsTokenCount")
+        if thoughts:
+            output_tokens = (output_tokens or 0) + thoughts
+        self._settle_reservation(
             input_tokens=usage.get("promptTokenCount"),
-            output_tokens=usage.get("candidatesTokenCount"),
+            output_tokens=output_tokens,
         )
         try:
             return data["candidates"][0]["content"]["parts"][0]["text"]
         except (KeyError, IndexError) as exc:
-            raise UpstreamError(f"{self.model_name} 回應結構異常") from exc
+            # 這條路徑涵蓋數種完全不同的故障（MAX_TOKENS 截斷、SAFETY/RECITATION
+            # 阻擋、prompt 被擋而只回 promptFeedback）。不記下上游線索的話，
+            # 線上只會看到一句「回應結構異常」，無從分辨也無從修。
+            candidates = data.get("candidates") or []
+            finish_reason = candidates[0].get("finishReason") if candidates else None
+            logger.error(
+                "Gemini response missing text model=%s finish_reason=%s "
+                "block_reason=%s candidates=%d",
+                self.model_name,
+                finish_reason,
+                (data.get("promptFeedback") or {}).get("blockReason"),
+                len(candidates),
+            )
+            raise UpstreamError(
+                f"{self.model_name} 回應結構異常"
+                + (f"（finishReason={finish_reason}）" if finish_reason else "")
+            ) from exc
 
 
 def _to_gemini_schema(schema: dict) -> dict:

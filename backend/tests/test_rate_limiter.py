@@ -100,3 +100,124 @@ def test_reserve_leaves_no_open_transaction(db):
 
     assert isinstance(reservation_id, int)  # 不 refresh 也必須拿得到 id
     assert not db.in_transaction(), "reserve_quota 回傳後不得留下開啟中的交易"
+
+
+# ---- 預約生命週期：洩漏會憑空吃掉當日額度 ----
+
+async def test_cancelled_call_releases_reservation(monkeypatch):
+    """asyncio.CancelledError 繼承 BaseException，既有 except 全攔不到。
+
+    沒有 try/finally 兜底時，關機或外層 timeout 會讓預約永遠留在
+    ai_quota_reservations，而 used_today() 把活著的預約計入已用量。
+    """
+    import asyncio
+
+    import httpx
+
+    from app.core.db import SessionLocal
+    from app.models.analysis import AiQuotaReservation
+    from app.providers.ai.gemini import GeminiProvider
+    from app.providers.ai.schemas import BatchAnalysisResult
+
+    db = SessionLocal()
+    try:
+        before = db.query(AiQuotaReservation).count()
+
+        class _Cancelling:
+            def __init__(self, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def post(self, *args, **kwargs):
+                raise asyncio.CancelledError()
+
+        monkeypatch.setattr(httpx, "AsyncClient", _Cancelling)
+        provider = GeminiProvider("gemini-3.5-flash-lite", db)
+
+        with pytest.raises(asyncio.CancelledError):
+            await provider._call_api("prompt", BatchAnalysisResult)
+
+        assert db.query(AiQuotaReservation).count() == before, "取消後預約沒被釋放"
+    finally:
+        db.close()
+
+
+async def test_connect_error_does_not_burn_quota(monkeypatch):
+    """ConnectError＝請求從未抵達 Google，不該記成一次用量。"""
+    import httpx
+
+    from app.core.db import SessionLocal
+    from app.core.exceptions import UpstreamError
+    from app.models.analysis import AiUsageLog
+    from app.providers.ai.gemini import GeminiProvider
+    from app.providers.ai.schemas import BatchAnalysisResult
+
+    db = SessionLocal()
+    try:
+        before = db.query(AiUsageLog).filter(
+            AiUsageLog.model == "gemini-3.5-flash-lite"
+        ).count()
+
+        class _Refused:
+            def __init__(self, **kwargs):
+                pass
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def post(self, *args, **kwargs):
+                raise httpx.ConnectError("connection refused")
+
+        monkeypatch.setattr(httpx, "AsyncClient", _Refused)
+        provider = GeminiProvider("gemini-3.5-flash-lite", db)
+
+        with pytest.raises(UpstreamError):
+            await provider._call_api("prompt", BatchAnalysisResult)
+
+        after = db.query(AiUsageLog).filter(
+            AiUsageLog.model == "gemini-3.5-flash-lite"
+        ).count()
+        assert after == before, "連線失敗被記成實際用量，白燒 RPD"
+    finally:
+        db.close()
+
+
+def test_maintenance_sweeps_stale_reservations():
+    """孤兒預約必須被回收，否則當日額度被永久佔用且資料表無上限成長。"""
+    from datetime import timedelta
+
+    from app.core.db import SessionLocal
+    from app.models.analysis import AiQuotaReservation
+    from app.services.job_service import utc_now
+    from app.services.maintenance_service import cleanup_expired_records
+
+    db = SessionLocal()
+    try:
+        stale = AiQuotaReservation(model="sweep-test", estimated_tokens=1)
+        stale.created_at = utc_now() - timedelta(hours=3)
+        fresh = AiQuotaReservation(model="sweep-test", estimated_tokens=1)
+        fresh.created_at = utc_now()
+        db.add_all([stale, fresh])
+        db.commit()
+
+        result = cleanup_expired_records(db)
+
+        assert result["stale_reservations_deleted"] >= 1
+        remaining = db.query(AiQuotaReservation).filter(
+            AiQuotaReservation.model == "sweep-test"
+        ).all()
+        assert len(remaining) == 1, "進行中的預約不該被誤刪"
+    finally:
+        db.query(AiQuotaReservation).filter(
+            AiQuotaReservation.model == "sweep-test"
+        ).delete()
+        db.commit()
+        db.close()

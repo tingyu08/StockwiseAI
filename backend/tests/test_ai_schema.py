@@ -408,6 +408,11 @@ def test_news_is_delimited_as_untrusted_model_input():
 
 
 async def test_batch_analysis_skips_unexpected_symbols(monkeypatch, caplog):
+    """未預期 symbol 會被跳過並記錄；一檔都沒對上時視為失敗而非靜默成功。
+
+    全空批次若當成功回傳，額度已扣、router 卻看不出失敗也不會降級，
+    使用者端只會得到 analyzed=0 而沒有任何錯誤。
+    """
     db = SessionLocal()
     provider = GeminiProvider("gemini-3.5-flash-lite", db)
     wrong = _valid_payload()
@@ -419,13 +424,13 @@ async def test_batch_analysis_skips_unexpected_symbols(monkeypatch, caplog):
     monkeypatch.setattr(provider, "_call_api", fake_call_api)
     try:
         with caplog.at_level("WARNING", logger="app.providers.ai.gemini"):
-            result = await provider.analyze_batch(
-                [AnalysisContext(symbol="2330", market="TW", price_summary="價格")]
-            )
+            with pytest.raises(UpstreamError, match="未包含任何有效報告"):
+                await provider.analyze_batch(
+                    [AnalysisContext(symbol="2330", market="TW", price_summary="價格")]
+                )
     finally:
         db.close()
 
-    assert result.reports == []
     assert any(
         "symbol=FAKE" in message and "reason=unexpected_symbol" in message
         for message in caplog.messages
@@ -439,3 +444,46 @@ async def test_batch_analysis_skips_unexpected_symbols(monkeypatch, caplog):
         and "reason=validation_failed_after_repair" in message
         for message in caplog.messages
     )
+
+
+async def test_batch_keeps_partial_results(monkeypatch):
+    """部分成功仍照舊回傳（刻意保留的 salvage 行為，不因全空防護而失效）。"""
+    db = SessionLocal()
+    provider = GeminiProvider("gemini-3.5-flash-lite", db)
+    good = _valid_payload()
+    good["symbol"] = "2330"
+
+    async def fake_call_api(prompt, output_model):
+        return json.dumps({"reports": [good]}, ensure_ascii=False)
+
+    monkeypatch.setattr(provider, "_call_api", fake_call_api)
+    try:
+        result = await provider.analyze_batch([
+            AnalysisContext(symbol="2330", market="TW", price_summary="價格"),
+            AnalysisContext(symbol="2454", market="TW", price_summary="價格"),
+        ])
+    finally:
+        db.close()
+
+    assert [r.symbol for r in result.reports] == ["2330"]
+
+
+async def test_batch_accepts_market_prefixed_symbol(monkeypatch):
+    """模型回 'TW/2330' 不該被丟掉——context 標頭本來就長這樣。"""
+    db = SessionLocal()
+    provider = GeminiProvider("gemini-3.5-flash-lite", db)
+    prefixed = _valid_payload()
+    prefixed["symbol"] = "TW/2330"
+
+    async def fake_call_api(prompt, output_model):
+        return json.dumps({"reports": [prefixed]}, ensure_ascii=False)
+
+    monkeypatch.setattr(provider, "_call_api", fake_call_api)
+    try:
+        result = await provider.analyze_batch(
+            [AnalysisContext(symbol="2330", market="TW", price_summary="價格")]
+        )
+    finally:
+        db.close()
+
+    assert len(result.reports) == 1

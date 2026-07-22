@@ -34,10 +34,6 @@ class AIProvider(ABC):
         ...
 
 
-class AIRouter:
-    """依額度狀態在 provider 鏈中自動降級。Phase 2 實作。"""
-
-    def __init__(self, chain: list[AIProvider]):
-        if not chain:
-            raise ValueError("AI provider chain must not be empty")
-        self.chain = chain
+# 註：實際的降級鏈是 app/providers/ai/router.py 的模組層函式
+# （ROUTINE_CHAIN / PREMIUM_CHAIN）。此處原有一個從未被使用的 AIRouter
+# 類別，會讓人誤以為存在第二套 router，已移除。
