@@ -181,7 +181,7 @@ def test_backtest_window_excludes_indicator_warmup():
     db = SessionLocal()
     try:
         # 600 個交易日 ≈ 涵蓋 range_days + 120 天緩衝仍有餘裕
-        stock = _seed(db, "7301", [100 + i * 0.1 for i in range(600)])
+        _seed(db, "7301", [100 + i * 0.1 for i in range(600)])
         result = run_backtest(db, "TW", "7301", "ma_cross", range_days=365)
 
         window_start = date.today() - timedelta(days=365)
