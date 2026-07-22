@@ -10,7 +10,7 @@ from app.core.exceptions import QuotaExceededError
 from app.models.analysis import AiQuotaReservation, AiUsageLog
 
 
-MODEL = "gemini-3.1-flash-lite"
+MODEL = "gemini-3.5-flash-lite"
 
 
 @pytest.fixture

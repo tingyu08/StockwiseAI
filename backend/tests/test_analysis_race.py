@@ -240,7 +240,7 @@ async def test_trade_batch_uses_premium_router(monkeypatch):
         async def fake_trade(_db, contexts):
             return BatchAnalysisResult(
                 reports=[_report(context.symbol) for context in contexts]
-            ), "gemini-3.5-flash"
+            ), "gemini-3.6-flash"
 
         monkeypatch.setattr("app.providers.ai.router.analyze_batch", fail_routine)
         monkeypatch.setattr(
@@ -249,7 +249,7 @@ async def test_trade_batch_uses_premium_router(monkeypatch):
 
         result = await analysis_service.run_batch(db, [stock], kind="trade")
 
-        assert result["model"] == "gemini-3.5-flash"
+        assert result["model"] == "gemini-3.6-flash"
         report = analysis_service.latest_report(db, stock, kinds=("trade",))
         assert report is not None and report.kind == "trade"
     finally:

@@ -16,8 +16,8 @@ from app.models.analysis import AiQuotaReservation, AiUsageLog
 @pytest.fixture(autouse=True)
 def _isolate_ai_usage():
     models = [
-        "gemini-3.1-flash-lite",
-        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.6-flash",
         antigravity.AGENT_ID,
     ]
     db = SessionLocal()
@@ -58,7 +58,7 @@ async def test_gemini_read_timeout_becomes_fallback_eligible(monkeypatch):
     monkeypatch.setattr(gemini, "_retry_delay", lambda _retry: 0, raising=False)
     db = SessionLocal()
     try:
-        provider = GeminiProvider("gemini-3.5-flash", db)
+        provider = GeminiProvider("gemini-3.6-flash", db)
         with pytest.raises(UpstreamError, match="timed out after 3 attempts"):
             await provider._call_api("prompt", AnalysisReport)
     finally:
@@ -97,7 +97,7 @@ async def test_gemini_provider_always_uses_native_response_schema(monkeypatch):
     monkeypatch.setattr(gemini.httpx, "AsyncClient", lambda **kw: CapturingClient())
     db = SessionLocal()
     try:
-        await GeminiProvider("gemini-3.1-flash-lite", db)._call_api(
+        await GeminiProvider("gemini-3.5-flash-lite", db)._call_api(
             "prompt", AnalysisReport
         )
     finally:
@@ -146,7 +146,7 @@ async def test_gemini_timeout_retries_then_succeeds(monkeypatch):
     monkeypatch.setattr(gemini, "_retry_delay", lambda retry: retry + 1, raising=False)
     db = SessionLocal()
     try:
-        result = await GeminiProvider("gemini-3.5-flash", db)._call_api(
+        result = await GeminiProvider("gemini-3.6-flash", db)._call_api(
             "prompt", AnalysisReport
         )
     finally:
@@ -191,7 +191,7 @@ async def test_gemini_503_retries_then_succeeds(monkeypatch):
     monkeypatch.setattr(gemini, "_retry_delay", lambda retry: retry + 1, raising=False)
     db = SessionLocal()
     try:
-        result = await GeminiProvider("gemini-3.5-flash", db)._call_api(
+        result = await GeminiProvider("gemini-3.6-flash", db)._call_api(
             "prompt", AnalysisReport
         )
     finally:
@@ -251,7 +251,7 @@ async def test_antigravity_poll_retries_a_read_timeout(monkeypatch):
 
 
 async def test_gemini_timeout_is_counted_and_releases_reservation(monkeypatch):
-    model = "gemini-3.5-flash"
+    model = "gemini-3.6-flash"
 
     class TimeoutClient:
         async def __aenter__(self):
@@ -313,14 +313,14 @@ async def test_gemini_timeout_log_contains_render_diagnostics(monkeypatch, caplo
     try:
         with caplog.at_level("WARNING", logger="app.providers.ai.gemini"):
             with pytest.raises(UpstreamError):
-                await GeminiProvider("gemini-3.5-flash", db)._call_api(
+                await GeminiProvider("gemini-3.6-flash", db)._call_api(
                     "prompt", AnalysisReport
                 )
     finally:
         db.close()
 
     combined = "\n".join(caplog.messages)
-    assert "model=gemini-3.5-flash" in combined
+    assert "model=gemini-3.6-flash" in combined
     assert "attempt=1/3" in combined
     assert "prompt_chars=6" in combined
     assert "elapsed_ms=" in combined
@@ -343,10 +343,10 @@ async def test_routine_chain_stops_after_single_model_failure(monkeypatch, caplo
         with pytest.raises(UpstreamError, match="所有例行分析模型皆不可用"):
             await router.analyze_batch(object(), [])
 
-    assert router.ROUTINE_CHAIN == ["gemini-3.1-flash-lite"]
-    assert used_models == ["gemini-3.1-flash-lite"]
+    assert router.ROUTINE_CHAIN == ["gemini-3.5-flash-lite"]
+    assert used_models == ["gemini-3.5-flash-lite"]
     assert any(
-        "AI provider failed model=gemini-3.1-flash-lite" in message
+        "AI provider failed model=gemini-3.5-flash-lite" in message
         and "error=timed out after 3 attempts" in message
         and "no models remaining" in message
         for message in caplog.messages
@@ -445,8 +445,8 @@ async def test_trading_analysis_prefers_gemini_35(monkeypatch):
     result, model = await analyze(object(), [])
 
     assert result is sentinel
-    assert model == "gemini-3.5-flash"
-    assert used_models == ["gemini-3.5-flash"]
+    assert model == "gemini-3.6-flash"
+    assert used_models == ["gemini-3.6-flash"]
 
 
 async def test_daily_briefing_prefers_gemini_35_then_falls_back(monkeypatch):
@@ -458,7 +458,7 @@ async def test_daily_briefing_prefers_gemini_35_then_falls_back(monkeypatch):
             used_models.append(model)
 
         async def generate(self, prompt, output_model):
-            if self.model == "gemini-3.5-flash":
+            if self.model == "gemini-3.6-flash":
                 raise UpstreamError("timeout")
             return "fallback-result"
 
@@ -471,5 +471,5 @@ async def test_daily_briefing_prefers_gemini_35_then_falls_back(monkeypatch):
     result, model = await generate(object(), "prompt", object)
 
     assert result == "fallback-result"
-    assert model == "gemini-3.1-flash-lite"
-    assert used_models[:2] == ["gemini-3.5-flash", "gemini-3.1-flash-lite"]
+    assert model == "gemini-3.5-flash-lite"
+    assert used_models[:2] == ["gemini-3.6-flash", "gemini-3.5-flash-lite"]

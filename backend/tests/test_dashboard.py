@@ -76,7 +76,7 @@ def test_dashboard_includes_stored_analysis_and_news(client):
                     stock_id=stock.id,
                     trade_date=today,
                     provider="gemini",
-                    model="gemini-3.1-flash-lite",
+                    model="gemini-3.5-flash-lite",
                     prompt_version="v2",
                     input_hash="dashboard-analysis",
                     kind="routine",

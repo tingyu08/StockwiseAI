@@ -81,7 +81,7 @@
 | 後端 | Python FastAPI | 量化生態（pandas、TA-Lib、backtesting.py）最完整 |
 | 資料庫 | SQLite（本機）／ PostgreSQL Neon 免費層（雲端），SQLAlchemy 統一兩者 | 單人使用 SQLite 足夠；部署細節見 [SD.md §6](docs/SD.md) |
 | 部署 | 方案 A：本機 Docker Compose（預設）；方案 B：Vercel＋Render Free＋Neon＋GitHub Actions cron | 兩案皆 $0，見 [SD.md §6](docs/SD.md) |
-| AI | **Gemini API 免費額度**（`gemini-3.1-flash-lite` 批次主力、`gemini-3.5-flash` 深度分析），全雲端同一把 key；經 AI Provider 抽象層可隨時換供應商 | 免費、支援結構化輸出 |
+| AI | **Gemini API 免費額度**（`gemini-3.5-flash-lite` 批次主力、`gemini-3.6-flash` 深度分析），全雲端同一把 key；經 AI Provider 抽象層可隨時換供應商 | 免費、支援結構化輸出 |
 | 台股行情 | FinMind（免費有 API）＋ TWSE/TPEX OpenAPI（折溢價、官方資料） | 免費、涵蓋日線與基本面 |
 | 美股行情 | yfinance（日線、ETF NAV）＋ FinMind USStockPrice（備援） | 免費、雲端 IP 限流時可降級 |
 | 排程 | APScheduler（每日收盤後更新資料、觸發 AI 模擬交易） | 輕量夠用 |
@@ -123,8 +123,8 @@ watchlists       自選股清單
 
 | 方案 | 模型 | 免費額度 | 定位 |
 |------|------|---------|------|
-| **Gemini 3.1 Flash Lite**（例行批次主力） | `gemini-3.1-flash-lite` | 本帳號實測：**15 RPM / 250K TPM / 500 RPD** | 額度最寬裕，支援 structured output，例行技術面批次分析品質足夠 |
-| **Gemini 3.5 Flash**（重要決策） | `gemini-3.5-flash` | 本帳號實測：**5 RPM / 250K TPM / 20 RPD** | 優先用於單檔深度分析、每日簡報總結與模擬交易分析；額度盡或上游失敗時，後兩者自動降級 |
+| **Gemini 3.5 Flash Lite**（例行批次主力） | `gemini-3.5-flash-lite` | 沿用前代設定：**15 RPM / 250K TPM / 500 RPD**（換代後尚未於儀表板核對） | 額度最寬裕，支援 structured output，例行技術面批次分析品質足夠 |
+| **Gemini 3.6 Flash**（重要決策） | `gemini-3.6-flash` | 沿用前代設定：**5 RPM / 250K TPM / 20 RPD**（換代後尚未於儀表板核對） | 優先用於單檔深度分析、每日簡報總結與模擬交易分析；額度盡或上游失敗時，後兩者自動降級 |
 | **Antigravity Agent**（研究型任務） | `antigravity-preview-05-2026`（Interactions API，底層 Gemini 3.5 Flash） | 免費層 60 RPM / 100K TPM / 100 RPD | 自帶沙箱＋Google 搜尋＋URL 抓取＋程式碼執行的託管 agent，適合「個股新聞/事件研究」這種需要自己上網查資料的任務；**不支援 structured output、不支援 temperature 等參數、preview 狀態隨時可能變動**，故不當主分析管線 |
 
 **Antigravity 的定位（分工）**：
@@ -135,9 +135,9 @@ watchlists       自選股清單
 **配額策略（依儀表板實測額度設計）**：
 1. **批次分析**：一次請求分析多檔股票（structured output 回傳陣列，每批 4 檔）。30 檔託管清單每日約需 8 個例行請求（TPM 250K 足以容納每批輸入資料）
 2. **模型分流（四層）**：
-   - 例行每日批次 → `gemini-3.1-flash-lite`（500 RPD，主力）
-   - 單檔深度分析（使用者觸發）→ `gemini-3.5-flash`（品質不可替代，不降級）
-   - 每日簡報總結、模擬交易分析 → `gemini-3.5-flash` 優先，失敗時降級至 Flash Lite
+   - 例行每日批次 → `gemini-3.5-flash-lite`（500 RPD，主力）
+   - 單檔深度分析（使用者觸發）→ `gemini-3.6-flash`（品質不可替代，不降級）
+   - 每日簡報總結、模擬交易分析 → `gemini-3.6-flash` 優先，失敗時降級至 Flash Lite
    - Flash Lite 例行分析失敗或額度不足 → 明確回報失敗，不改用非結構化模型
 3. **請求節流器**：全域 rate limiter 按模型別對齊儀表板實際額度，避免超打免費額度
 4. **分析快取**：同一檔股票同一交易日的分析只跑一次

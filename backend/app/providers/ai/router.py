@@ -1,7 +1,7 @@
 """AI 降級鏈 Router。
 
 例行批次：僅使用 flash-lite，不設備援模型
-深度分析：3.5-flash（不降級——額度盡即回報，品質不可替代）
+深度分析：3.6-flash（不降級——額度盡即回報，品質不可替代）
 """
 import logging
 
@@ -14,8 +14,8 @@ from app.providers.ai.schemas import AnalysisReport, BatchAnalysisResult
 
 logger = logging.getLogger(__name__)
 
-ROUTINE_CHAIN = ["gemini-3.1-flash-lite"]
-DEEP_MODEL = "gemini-3.5-flash"
+ROUTINE_CHAIN = ["gemini-3.5-flash-lite"]
+DEEP_MODEL = "gemini-3.6-flash"
 PREMIUM_CHAIN = [DEEP_MODEL, *ROUTINE_CHAIN]
 
 

@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
 PROMPT_VERSION = "v2"
+# 推理強度（Gemini 3.x）：minimal / low / medium / high。
+# low 以下實測為零推理，分析類任務至少要 medium；此處取 high 換取判斷品質。
+THINKING_LEVEL = "high"
 _sleep = asyncio.sleep
 
 
@@ -347,13 +350,13 @@ class GeminiProvider(AIProvider):
         generation_config: dict = {
             "responseMimeType": "application/json",
             "responseSchema": _to_gemini_schema(output_model.model_json_schema()),
-            # 明確開啟推理（-1 = 動態預算，模型視難度決定想多深）。
-            # flash-lite 系列預設不推理，不指定就會零推理跑批次分析；
-            # 配額按請求數計，推理 token 不另外扣 RPD，代價只有延遲。
-            "thinkingConfig": {"thinkingBudget": -1},
-            # 分析要可重現、少發散：低溫 + 固定 topP
-            "temperature": 0.2,
-            "topP": 0.9,
+            # Gemini 3.x 以 thinkingLevel 取代 thinkingBudget。實測（2026-07-21）：
+            # minimal/low 兩級在 3.6-flash 與 3.5-flash-lite 上都是「零推理」，
+            # 真正的推理從 medium 起跳，故分析一律用 high。
+            # 配額按請求數計，推理 token 不扣 RPD，代價只有延遲（批次皆為排程執行）。
+            "thinkingConfig": {"thinkingLevel": THINKING_LEVEL},
+            # 註：temperature/topP/topK 在 Gemini 3.x 已廢棄且被忽略，
+            # 未來版本傳入會回 HTTP 400，故不再設定。
         }
 
         body: dict = {

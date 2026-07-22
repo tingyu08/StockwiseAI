@@ -1,8 +1,8 @@
 """AIProvider 抽象介面與降級鏈 Router。
 
 降級順序（docs/PLAN.md §4.0）：
-  例行批次   gemini-3.1-flash-lite（無備援模型）
-  深度分析   gemini-3.5-flash（額度盡即拒絕，不降級——品質不可替代）
+  例行批次   gemini-3.5-flash-lite（無備援模型）
+  深度分析   gemini-3.6-flash（額度盡即拒絕，不降級——品質不可替代）
 """
 from abc import ABC, abstractmethod
 from dataclasses import dataclass

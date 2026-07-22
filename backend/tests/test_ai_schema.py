@@ -110,7 +110,7 @@ def test_report_rejects_scenario_probabilities_that_do_not_sum_to_one():
 
 async def test_generate_returns_valid_first_response_without_repair(monkeypatch):
     db = SessionLocal()
-    provider = GeminiProvider("gemini-3.1-flash-lite", db)
+    provider = GeminiProvider("gemini-3.5-flash-lite", db)
     raw = json.dumps(_valid_payload(), ensure_ascii=False)
     prompts = []
 
@@ -130,7 +130,7 @@ async def test_generate_returns_valid_first_response_without_repair(monkeypatch)
 
 async def test_generate_repairs_invalid_response_with_validation_context(monkeypatch):
     db = SessionLocal()
-    provider = GeminiProvider("gemini-3.1-flash-lite", db)
+    provider = GeminiProvider("gemini-3.5-flash-lite", db)
     invalid = _valid_payload()
     invalid["action"] = "buy"
     invalid["stop_loss"] = 2400
@@ -158,7 +158,7 @@ async def test_generate_repairs_invalid_response_with_validation_context(monkeyp
 
 async def test_generate_raises_after_two_invalid_responses(monkeypatch):
     db = SessionLocal()
-    provider = GeminiProvider("gemini-3.1-flash-lite", db)
+    provider = GeminiProvider("gemini-3.5-flash-lite", db)
     invalid = _valid_payload()
     invalid["action"] = "buy"
     invalid["stop_loss"] = 2400
@@ -181,7 +181,7 @@ async def test_generate_raises_after_two_invalid_responses(monkeypatch):
 
 async def test_batch_repairs_only_invalid_symbol_and_preserves_order(monkeypatch):
     db = SessionLocal()
-    provider = GeminiProvider("gemini-3.1-flash-lite", db)
+    provider = GeminiProvider("gemini-3.5-flash-lite", db)
     valid = _valid_payload()
     valid["symbol"] = "2330"
     invalid = _valid_payload()
@@ -225,7 +225,7 @@ async def test_batch_skips_and_logs_symbol_when_targeted_repair_stays_invalid(
     monkeypatch, caplog
 ):
     db = SessionLocal()
-    provider = GeminiProvider("gemini-3.1-flash-lite", db)
+    provider = GeminiProvider("gemini-3.5-flash-lite", db)
     valid = _valid_payload()
     valid["symbol"] = "2330"
     invalid = _valid_payload()
@@ -265,7 +265,7 @@ async def test_batch_keeps_valid_reports_when_targeted_repair_request_fails(
     monkeypatch, caplog
 ):
     db = SessionLocal()
-    provider = GeminiProvider("gemini-3.1-flash-lite", db)
+    provider = GeminiProvider("gemini-3.5-flash-lite", db)
     valid = _valid_payload()
     valid["symbol"] = "2330"
     invalid = _valid_payload()
@@ -308,7 +308,7 @@ async def test_batch_keeps_valid_reports_when_targeted_repair_request_fails(
 
 async def test_batch_does_not_repair_invalid_duplicate_of_valid_report(monkeypatch):
     db = SessionLocal()
-    provider = GeminiProvider("gemini-3.1-flash-lite", db)
+    provider = GeminiProvider("gemini-3.5-flash-lite", db)
     valid_2330 = _valid_payload()
     valid_2330["symbol"] = "2330"
     invalid_duplicate = _valid_payload()
@@ -347,7 +347,7 @@ async def test_batch_does_not_repair_invalid_duplicate_of_valid_report(monkeypat
 
 async def test_batch_repairs_unusable_outer_json_once(monkeypatch):
     db = SessionLocal()
-    provider = GeminiProvider("gemini-3.1-flash-lite", db)
+    provider = GeminiProvider("gemini-3.5-flash-lite", db)
     valid = _valid_payload()
     responses = [
         "not json",
@@ -374,7 +374,7 @@ async def test_batch_repairs_unusable_outer_json_once(monkeypatch):
 
 async def test_batch_raises_after_two_unusable_outer_responses(monkeypatch):
     db = SessionLocal()
-    provider = GeminiProvider("gemini-3.1-flash-lite", db)
+    provider = GeminiProvider("gemini-3.5-flash-lite", db)
     calls = 0
 
     async def fake_call_api(prompt, output_model):
@@ -409,7 +409,7 @@ def test_news_is_delimited_as_untrusted_model_input():
 
 async def test_batch_analysis_skips_unexpected_symbols(monkeypatch, caplog):
     db = SessionLocal()
-    provider = GeminiProvider("gemini-3.1-flash-lite", db)
+    provider = GeminiProvider("gemini-3.5-flash-lite", db)
     wrong = _valid_payload()
     wrong["symbol"] = "FAKE"
 
