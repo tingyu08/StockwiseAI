@@ -1,7 +1,9 @@
-"""美股資料源：日線以 FinMind 為主（官方 API），yfinance 備援。
+"""美股資料源：日線與搜尋皆以 FinMind 為主（官方 API），yfinance 備援。
 
-Yahoo 對機房 IP 常限流，雲端上 yfinance 幾乎必失敗，故日線主從對調；
-搜尋驗證仍以 yfinance 優先（需要名稱/ETF 類型中繼資料，FinMind 沒有）。
+Yahoo 對機房 IP 常限流，雲端上 yfinance 幾乎必失敗，故主從對調。
+FinMind 免費層的美股僅有兩個資料集：USStockPrice（日線）與
+USStockInfo（名稱/ETF 分類）——ETF 淨值與盤中報價它都沒有，
+那兩處仍只能靠 yfinance（見 premium_service / intraday）。
 yfinance 是同步庫，統一用 asyncio.to_thread 包成 async。
 """
 import asyncio
@@ -23,31 +25,40 @@ class YFinanceProvider(MarketDataProvider):
     async def search_stocks(self, query: str) -> list[StockInfo]:
         """美股不維護全清單：以 symbol 直接驗證（大寫代號查得到就回傳）。
 
-        yfinance 被 Yahoo 限流時退 FinMind 驗證：近幾日有日線＝代號存在。
-        FinMind 沒有名稱/類型資訊，name 先用代號、kind 猜 stock——
-        之後 yfinance 解封、資料同步時不受影響（同步只認 symbol）。
+        FinMind 的 USStockInfo 已提供名稱與 ETF 分類，故與日線一致以
+        FinMind 為主源；Yahoo 對機房 IP 幾乎必限流，僅在 FinMind 查無時
+        才退 yfinance（涵蓋 FinMind 未收錄的冷門代號）。
         """
         symbol = query.upper()
+        info = await self._lookup_via_finmind(symbol)
+        if info is not None:
+            return [info]
         try:
-            info = await self._lookup(symbol)
+            fallback = await self._lookup(symbol)
         except UpstreamError:
-            info = await self._lookup_via_finmind(symbol)
-            if info is None:
-                raise  # FinMind 也查無 → 如實回報限流，而非誤判成「查無」
-        return [info] if info else []
+            # 兩邊都不可用：如實回報限流，不可誤判成「查無此代號」
+            raise
+        return [fallback] if fallback else []
 
     @staticmethod
     async def _lookup_via_finmind(symbol: str) -> StockInfo | None:
+        """近幾日有日線＝代號存在；名稱與 ETF 分類取自 USStockInfo。"""
+
         def _get() -> StockInfo | None:
-            df = finmind_us.fetch_daily(symbol)
-            if df.empty:
+            if finmind_us.fetch_daily(symbol).empty:
                 return None
-            return StockInfo(symbol=symbol, name=symbol, currency="USD", kind="stock")
+            meta = finmind_us.fetch_stock_info(symbol) or {}
+            return StockInfo(
+                symbol=symbol,
+                name=meta.get("name") or symbol,
+                currency="USD",
+                kind=meta.get("kind") or "stock",
+            )
 
         try:
             return await asyncio.to_thread(_get)
         except Exception as exc:
-            logger.warning("FinMind 備援查詢 %s 失敗：%s", symbol, exc)
+            logger.warning("FinMind 查詢 %s 失敗：%s", symbol, exc)
             return None
 
     async def _lookup(self, symbol: str) -> StockInfo | None:

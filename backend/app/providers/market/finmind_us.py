@@ -20,6 +20,41 @@ API_URL = "https://api.finmindtrade.com/api/v4/data"
 DEFAULT_LOOKBACK_DAYS = 200  # API 必帶 start_date；未指定時取近 200 天
 
 
+def fetch_stock_info(symbol: str) -> dict | None:
+    """USStockInfo：回傳 {name, kind}，查無回 None。
+
+    Subsector == "ETF" 是 FinMind 區分 ETF 與個股的唯一依據（實測：ETF 的
+    Country/IPOYear/MarketCap 皆為空值，只有 Subsector 有意義）。
+    """
+    try:
+        res = httpx.get(
+            API_URL,
+            params={
+                "dataset": "USStockInfo",
+                "data_id": symbol,
+                "token": get_settings().finmind_token,
+                "start_date": "2020-01-01",
+            },
+            timeout=30,
+        )
+        body = res.json()
+    except Exception as exc:
+        logger.warning("FinMind USStockInfo %s 失敗：%s", symbol, exc)
+        return None
+    if res.status_code != 200 or body.get("status") != 200:
+        logger.warning("FinMind USStockInfo %s 回應異常：%s", symbol, body.get("msg"))
+        return None
+    rows = body.get("data") or []
+    if not rows:
+        return None
+    row = rows[-1]  # 取最新一筆
+    subsector = (row.get("Subsector") or "").strip()
+    return {
+        "name": (row.get("stock_name") or symbol).strip() or symbol,
+        "kind": "etf" if subsector.upper() == "ETF" else "stock",
+    }
+
+
 def fetch_daily(symbol: str, start: date | None = None, end: date | None = None) -> pd.DataFrame:
     """回傳含 Date/Open/High/Low/Close/Volume 的 DataFrame（升冪），查無回空。"""
     if symbol == "^TWII":

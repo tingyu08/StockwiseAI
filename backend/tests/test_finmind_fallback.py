@@ -161,21 +161,60 @@ def _patch_lookup_rate_limited(monkeypatch):
     monkeypatch.setattr(yfinance_us.YFinanceProvider, "_lookup", rate_limited)
 
 
-async def test_search_falls_back_to_finmind_when_rate_limited(monkeypatch):
+_PRICED = pd.DataFrame({
+    "Date": pd.to_datetime(["2026-07-20"]),
+    "Open": [97.6], "High": [101.0], "Low": [96.9],
+    "Close": [97.06], "Volume": [89273530],
+})
+
+
+async def test_search_uses_finmind_metadata_for_stock(monkeypatch):
+    """FinMind 為主源：名稱取自 USStockInfo，不必動用 yfinance。"""
     from app.providers.market.yfinance_us import YFinanceProvider
 
-    _patch_lookup_rate_limited(monkeypatch)
-    fallback = pd.DataFrame({
-        "Date": pd.to_datetime(["2026-07-20"]),
-        "Open": [97.6], "High": [101.0], "Low": [96.9],
-        "Close": [97.06], "Volume": [89273530],
-    })
-    monkeypatch.setattr(finmind_us, "fetch_daily", lambda *a, **kw: fallback)
+    _patch_lookup_rate_limited(monkeypatch)  # yfinance 一旦被呼叫就會炸
+    monkeypatch.setattr(finmind_us, "fetch_daily", lambda *a, **kw: _PRICED)
+    monkeypatch.setattr(
+        finmind_us, "fetch_stock_info",
+        lambda s: {"name": "Intel Corporation Common Stock", "kind": "stock"},
+    )
 
     results = await YFinanceProvider().search_stocks("intc")
 
     assert len(results) == 1
-    assert results[0].symbol == "INTC" and results[0].kind == "stock"
+    assert results[0].symbol == "INTC"
+    assert results[0].name == "Intel Corporation Common Stock"
+    assert results[0].kind == "stock"
+
+
+async def test_search_classifies_etf_from_finmind_subsector(monkeypatch):
+    """ETF 必須被正確分類，否則不會被納入 NAV/折溢價追蹤。"""
+    from app.providers.market.yfinance_us import YFinanceProvider
+
+    _patch_lookup_rate_limited(monkeypatch)
+    monkeypatch.setattr(finmind_us, "fetch_daily", lambda *a, **kw: _PRICED)
+    monkeypatch.setattr(
+        finmind_us, "fetch_stock_info",
+        lambda s: {"name": "Invesco QQQ Trust Series 1", "kind": "etf"},
+    )
+
+    results = await YFinanceProvider().search_stocks("qqq")
+
+    assert results[0].kind == "etf"
+    assert results[0].name == "Invesco QQQ Trust Series 1"
+
+
+async def test_search_still_returns_symbol_when_metadata_missing(monkeypatch):
+    """有日線但 USStockInfo 查無 → 仍可加入自選，名稱退回代號。"""
+    from app.providers.market.yfinance_us import YFinanceProvider
+
+    _patch_lookup_rate_limited(monkeypatch)
+    monkeypatch.setattr(finmind_us, "fetch_daily", lambda *a, **kw: _PRICED)
+    monkeypatch.setattr(finmind_us, "fetch_stock_info", lambda s: None)
+
+    results = await YFinanceProvider().search_stocks("intc")
+
+    assert results[0].name == "INTC" and results[0].kind == "stock"
 
 
 async def test_search_reraises_rate_limit_when_finmind_also_empty(monkeypatch):
@@ -185,9 +224,27 @@ async def test_search_reraises_rate_limit_when_finmind_also_empty(monkeypatch):
     _patch_lookup_rate_limited(monkeypatch)
     monkeypatch.setattr(finmind_us, "fetch_daily", lambda *a, **kw: pd.DataFrame())
 
-    # FinMind 也查無 → 應如實回報「限流」而非誤判成「查無」
+    # FinMind 查無且 yfinance 被限流 → 如實回報「限流」而非誤判成「查無」
     with pytest.raises(UpstreamError, match="限流"):
         await YFinanceProvider().search_stocks("ZZZZZZ")
+
+
+def test_fetch_stock_info_maps_etf_subsector(monkeypatch):
+    body = {"msg": "success", "status": 200, "data": [
+        {"date": "2026-07-22", "stock_id": "QQQ", "Subsector": "ETF",
+         "stock_name": "Invesco QQQ Trust Series 1"},
+    ]}
+    monkeypatch.setattr(finmind_us.httpx, "get", _mock_get(body))
+    assert finmind_us.fetch_stock_info("QQQ") == {
+        "name": "Invesco QQQ Trust Series 1", "kind": "etf",
+    }
+
+
+def test_fetch_stock_info_returns_none_when_empty(monkeypatch):
+    monkeypatch.setattr(
+        finmind_us.httpx, "get", _mock_get({"status": 200, "data": []})
+    )
+    assert finmind_us.fetch_stock_info("ZZZZ") is None
 
 
 async def test_finmind_provider_retries_status_errors(monkeypatch):
