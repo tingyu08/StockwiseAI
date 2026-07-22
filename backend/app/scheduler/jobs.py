@@ -320,11 +320,14 @@ def start_scheduler() -> AsyncIOScheduler:
     at(6, 40, "ai-batch-tw")
     at(6, 55, "overview-tw")
     at(7, 10, "sim-decide-tw")
-    # 台股收盤後：14:30 同步 → 14:35 撮合晨間委託（記入今日開盤價）→ 14:45 淨值 → 14:50 警示
-    at(14, 30, "sync-tw")
-    at(14, 35, "sim-fill-tw")
+    # 台股收盤後：14:45 淨值 → 16:30 同步 → 16:40 撮合晨間委託 → 16:50 警示
+    # 淨值早、行情晚是刻意的：證交所 all_etf.txt 收盤即有當日淨值（實測
+    # 13:52 已可取得），但 FinMind 的台股日線同一時間仍只到前一交易日，
+    # 原本 14:30（收盤後 1 小時）同步會抓不到當日資料。
     at(14, 45, "nav-tw")
-    at(14, 50, "alerts-tw")
+    at(16, 30, "sync-tw")
+    at(16, 40, "sim-fill-tw")
+    at(16, 50, "alerts-tw")
     # 美股晨間（美東開盤前，台灣時間晚上）：19:40 新聞 → 20:10 批次 → 20:25 簡報 → 20:40 委託（21:30 開盤成交）
     at(19, 40, "news-us")
     at(20, 10, "ai-batch-us")
@@ -339,7 +342,7 @@ def start_scheduler() -> AsyncIOScheduler:
     at(8, 10, "sim-fill-us")
     at(8, 25, "alerts-us")
     at(3, 15, "maintenance")
-    at(15, 30, "backup-db")  # 每日 DB 備份（台股收盤序列之後的閒置時段）
+    at(17, 30, "backup-db")  # 每日 DB 備份（台股收盤序列之後的閒置時段）
     # 盤中出場哨兵（每小時；非交易日/時段由哨兵自行 no-op）
     at("9-13", 10, "sentinel-tw")
     at("21-23,0-4", 40, "sentinel-us")
