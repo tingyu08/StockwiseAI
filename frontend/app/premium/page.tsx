@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import {
   CartesianGrid,
   Line,
@@ -20,9 +21,18 @@ import { useMarketStore } from "@/stores/market";
 export default function PremiumPage() {
   const market = useMarketStore((s) => s.market);
   const supported = usePremiumSupported();
+  const router = useRouter();
   const { data: rows, isLoading, isError, error } = usePremiumList();
   const [selected, setSelected] = useState<string | null>(null);
   const { data: history } = usePremiumHistory(selected);
+
+  // 此市場不提供折溢價（如美股）→ 導覽列本就不顯示本頁，
+  // 直接輸入網址時導回儀表板，不留下空殼頁面
+  useEffect(() => {
+    if (!supported) router.replace(`/?market=${market}`);
+  }, [supported, market, router]);
+
+  if (!supported) return null;
 
   return (
     <div className="space-y-5">
@@ -36,22 +46,10 @@ export default function PremiumPage() {
         <div className="px-5">
           <FreshnessNote>{FRESHNESS.premium}</FreshnessNote>
         </div>
-        {!supported && (
-          <div className="p-5 text-sm text-neutral-500">
-            <p>美股不提供折溢價。</p>
-            <p className="mt-1 text-xs text-neutral-400">
-              免費資料源皆無美股 ETF 淨值；且 VOO、QQQ 這類大型指數 ETF
-              有做市商全天套利，折溢價長期趨近 0%，參考價值低。
-              台股 ETF（尤其主動式）折溢價常達數個百分點，請切換至台股檢視。
-            </p>
-          </div>
-        )}
-        {supported && isLoading && <p className="p-5 text-sm text-neutral-500">載入中…</p>}
+        {isLoading && <p className="p-5 text-sm text-neutral-500">載入中…</p>}
         {isError && <p className="p-5 text-sm text-red-500">{(error as Error).message}</p>}
-        {supported && rows && rows.length === 0 && (
-          <p className="p-5 text-sm text-neutral-500">
-            自選清單中沒有 {market === "tw" ? "台股" : "美股"} ETF。
-          </p>
+        {rows && rows.length === 0 && (
+          <p className="p-5 text-sm text-neutral-500">自選清單中沒有台股 ETF。</p>
         )}
         {rows && rows.length > 0 && (
           <table className="mt-3 w-full text-sm">

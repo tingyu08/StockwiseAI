@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 
+import { isPathAvailable } from "@/lib/nav";
 import { MARKET_LABELS, useMarketStore, type Market } from "@/stores/market";
 
 const MARKETS: Market[] = ["tw", "us"];
@@ -23,8 +24,9 @@ export function MarketSwitch() {
 
   const handleChange = (next: Market) => {
     setMarket(next);
-    // 個股頁的代號屬於單一市場，切換市場後導回儀表板（避免停在他市場的個股）
-    if (pathname.startsWith("/stock/")) {
+    // 個股頁的代號屬於單一市場；折溢價等頁面僅部分市場提供——
+    // 兩種情況切換後都導回儀表板，避免停在該市場不存在的頁面
+    if (pathname.startsWith("/stock/") || !isPathAvailable(pathname, next)) {
       router.push(`/?market=${next}`);
       return;
     }

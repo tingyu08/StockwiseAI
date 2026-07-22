@@ -3,6 +3,7 @@ import Link from "next/link";
 import { Suspense } from "react";
 import "./globals.css";
 
+import { MainNav } from "@/components/main-nav";
 import { MarketSwitch } from "@/components/market-switch";
 import { JobCenter } from "@/components/job-center";
 import { Providers } from "@/components/providers";
@@ -25,13 +26,7 @@ export default function RootLayout({
               <h1 className="text-lg font-semibold">
                 <Link href="/">📈 Stock AI Advisor</Link>
               </h1>
-              <nav className="flex gap-4 text-sm text-neutral-500">
-                <Link href="/" className="hover:text-neutral-900 dark:hover:text-white">儀表板</Link>
-                <Link href="/compare" className="hover:text-neutral-900 dark:hover:text-white">比較</Link>
-                <Link href="/premium" className="hover:text-neutral-900 dark:hover:text-white">折溢價</Link>
-                <Link href="/simulation" className="hover:text-neutral-900 dark:hover:text-white">模擬交易</Link>
-                <Link href="/backtest" className="hover:text-neutral-900 dark:hover:text-white">回測</Link>
-              </nav>
+              <MainNav />
             </div>
             <div className="flex items-center gap-2">
               <JobCenter />
