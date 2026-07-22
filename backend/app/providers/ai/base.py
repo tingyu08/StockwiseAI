@@ -17,7 +17,8 @@ class AnalysisContext:
     symbol: str
     market: str
     price_summary: str  # 近 120 日 OHLCV＋指標摘要（文字化）
-    flow_summary: str = ""  # 法人買賣超（台股）或量價位置（美股）
+    flow_summary: str = ""  # 籌碼面：三大法人分項買賣超＋融資券（僅台股）
+    fundamental_summary: str = ""  # 基本面：本益比/淨值比/殖利率＋月營收（僅台股）
     premium_summary: str = ""  # ETF 折溢價現況
     news_summary: str = ""  # Antigravity 產出的新聞摘要
 

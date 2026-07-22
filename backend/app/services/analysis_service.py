@@ -17,7 +17,6 @@ from app.models import AiReport, DailyPrice, Indicator, Stock
 from app.providers.ai import router as ai_router
 from app.providers.ai.base import AnalysisContext
 from app.providers.ai.gemini import PROMPT_VERSION
-from app.services.market_gateway import market_data
 from app.services.time_service import market_today
 
 if TYPE_CHECKING:
@@ -87,9 +86,14 @@ async def build_context(db: Session, stock: Stock) -> AnalysisContext:
             f"｜布林上下軌={_f(ind.bb_upper)}/{_f(ind.bb_lower)}"
         )
 
-    flow_summary = ""
+    flow_summary = fundamental_summary = ""
     if stock.market == "TW":
-        flow_summary = await _tw_flow_summary(stock)
+        # 美股無對應資料：FinMind 免費層只有 USStockPrice／USStockInfo
+        from app.services.tw_market_facts import build_tw_facts
+
+        flow_summary, fundamental_summary = await build_tw_facts(
+            stock.symbol, is_etf=stock.kind == "etf"
+        )
 
     from app.services.news_service import latest_news_summary
 
@@ -98,6 +102,7 @@ async def build_context(db: Session, stock: Stock) -> AnalysisContext:
         market=stock.market,
         price_summary="\n".join(lines),
         flow_summary=flow_summary,
+        fundamental_summary=fundamental_summary,
         news_summary=latest_news_summary(db, stock),
     )
 
@@ -444,16 +449,3 @@ def _hash_text(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
-async def _tw_flow_summary(stock: Stock) -> str:
-    try:
-        today = market_today("TW")
-        rows = await market_data.get_institutional_flows(
-            "TW", stock.symbol, today - timedelta(days=14), today
-        )
-        if not rows:
-            return ""
-        net = sum(r.get("buy", 0) - r.get("sell", 0) for r in rows)
-        return f"近 10 個交易日三大法人合計{'買超' if net >= 0 else '賣超'} {abs(net) / 1000:,.0f} 張"
-    except Exception:
-        logger.warning("法人資料取得失敗，略過籌碼面", exc_info=True)
-        return ""

@@ -89,7 +89,9 @@ class GeminiProvider(AIProvider):
     def _context_block(c: AnalysisContext) -> str:
         parts = [f"【{c.market}/{c.symbol}】", c.price_summary]
         if c.flow_summary:
-            parts.append(f"籌碼面：{c.flow_summary}")
+            parts.append(f"籌碼面：\n{c.flow_summary}")
+        if c.fundamental_summary:
+            parts.append(f"基本面：\n{c.fundamental_summary}")
         if c.premium_summary:
             parts.append(f"折溢價：{c.premium_summary}")
         if c.news_summary:

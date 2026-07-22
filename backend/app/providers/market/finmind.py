@@ -93,3 +93,32 @@ class FinMindProvider(MarketDataProvider):
             start_date=start.isoformat(),
             end_date=end.isoformat(),
         )
+
+    # ---- 台股專屬資料集（免費層可用；美股 FinMind 無對應資料）----
+
+    async def get_valuation(self, symbol: str, start: date, end: date) -> list[dict]:
+        """每日本益比／股價淨值比／現金殖利率（TaiwanStockPER）。"""
+        return await self._fetch(
+            "TaiwanStockPER",
+            data_id=symbol,
+            start_date=start.isoformat(),
+            end_date=end.isoformat(),
+        )
+
+    async def get_margin_trading(self, symbol: str, start: date, end: date) -> list[dict]:
+        """融資融券餘額（TaiwanStockMarginPurchaseShortSale），單位為張。"""
+        return await self._fetch(
+            "TaiwanStockMarginPurchaseShortSale",
+            data_id=symbol,
+            start_date=start.isoformat(),
+            end_date=end.isoformat(),
+        )
+
+    async def get_monthly_revenue(self, symbol: str, start: date, end: date) -> list[dict]:
+        """月營收（TaiwanStockMonthRevenue）。需涵蓋去年同月才算得出年增率。"""
+        return await self._fetch(
+            "TaiwanStockMonthRevenue",
+            data_id=symbol,
+            start_date=start.isoformat(),
+            end_date=end.isoformat(),
+        )
