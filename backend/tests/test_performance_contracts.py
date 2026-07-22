@@ -34,8 +34,8 @@ def test_premium_list_uses_one_query_for_all_etfs(client):
     try:
         for i in range(3):
             stock = Stock(
-                symbol=f"QETF{i}", market="US", name=f"Query ETF {i}",
-                currency="USD", kind="etf",
+                symbol=f"QETF{i}", market="TW", name=f"Query ETF {i}",
+                currency="TWD", kind="etf",
             )
             db.add(stock)
             db.flush()
@@ -51,7 +51,7 @@ def test_premium_list_uses_one_query_for_all_etfs(client):
 
         event.listen(engine, "before_cursor_execute", count_query)
         try:
-            rows = premium_list(db, "US")
+            rows = premium_list(db, "TW")
         finally:
             event.remove(engine, "before_cursor_execute", count_query)
 

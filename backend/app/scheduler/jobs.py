@@ -261,7 +261,6 @@ JOBS = {
     "overview-tw": lambda: overview_daily("TW"),
     "overview-us": lambda: overview_daily("US"),
     "nav-tw": lambda: nav_snapshot_daily("TW"),
-    "nav-us": lambda: nav_snapshot_daily("US"),
     "sim-decide-tw": lambda: sim_decide_daily("TW"),
     "sim-decide-us": lambda: sim_decide_daily("US"),
     "sim-fill-tw": lambda: sim_fill_daily("TW"),
@@ -331,13 +330,13 @@ def start_scheduler() -> AsyncIOScheduler:
     at(20, 10, "ai-batch-us")
     at(20, 25, "overview-us")
     at(20, 40, "sim-decide-us")
-    # 美股收盤後（台灣上午）：08:00 同步 → 08:10 撮合 → 08:20 淨值 → 08:25 警示
+    # 美股收盤後（台灣上午）：08:00 同步 → 08:10 撮合 → 08:25 警示
+    # （無淨值快照：免費資料源不提供美股 ETF 淨值，折溢價僅台股支援）
     # 刻意不排在收盤後 1~2 小時：FinMind 的美股日線要數小時才會就緒，
     # 原本 05:30（收盤後 1.5h）抓不到當日資料卻回報成功，行情因此停在前一日。
     # 美股收盤 16:00 ET＝台灣 04:00（夏令）/05:00（冬令），08:00 兩季皆有 3 小時以上緩衝。
     at(8, 0, "sync-us")
     at(8, 10, "sim-fill-us")
-    at(8, 20, "nav-us")
     at(8, 25, "alerts-us")
     at(3, 15, "maintenance")
     at(15, 30, "backup-db")  # 每日 DB 備份（台股收盤序列之後的閒置時段）

@@ -25,20 +25,31 @@ export interface PremiumHistoryPoint {
 
 export type { PredictionBandPoint, PredictionData } from "@/lib/types";
 
+/** 折溢價僅台股支援：免費資料源沒有美股 ETF 淨值（見後端 premium_service）。 */
+export const PREMIUM_MARKETS = ["tw"];
+
+export function usePremiumSupported() {
+  const market = useMarketStore((s) => s.market);
+  return PREMIUM_MARKETS.includes(market);
+}
+
 export function usePremiumList() {
   const market = useMarketStore((s) => s.market);
+  const supported = PREMIUM_MARKETS.includes(market);
   return useQuery({
     queryKey: ["premium", market],
     queryFn: () => apiGet<PremiumRow[]>("/premium", {}, market),
+    enabled: supported,
   });
 }
 
 export function usePremiumHistory(symbol: string | null) {
   const market = useMarketStore((s) => s.market);
+  const supported = PREMIUM_MARKETS.includes(market);
   return useQuery({
     queryKey: ["premium-history", market, symbol],
     queryFn: () => apiGet<PremiumHistoryPoint[]>(`/premium/${symbol}/history`, {}, market),
-    enabled: !!symbol,
+    enabled: supported && !!symbol,
   });
 }
 

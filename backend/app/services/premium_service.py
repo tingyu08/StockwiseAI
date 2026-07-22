@@ -1,10 +1,14 @@
 """ETF 折溢價：每日快照入庫（歷史由排程逐日累積——免費源無歷史 NAV）。
 
-台股：mis.twse.com.tw all_etf.txt（全 ETF 一次回傳：預估淨值/市價/折溢價）
-美股：yfinance Ticker.info 的 navPrice
+**僅支援台股**：淨值取自 mis.twse.com.tw all_etf.txt（全 ETF 一次回傳
+預估淨值/市價/折溢價），且台股 ETF——特別是主動式——折溢價常達數個百分點，
+是有決策價值的訊號。
+
+美股已移除：免費資料源（FinMind 免費層、Nasdaq 公開 API）皆無 ETF 淨值，
+僅 Yahoo 有而它封鎖機房 IP；且 VOO/QQQ 這類大型指數 ETF 有做市商全天套利，
+實測折溢價約 -0.003%，資訊量趨近於零，不值得為此維護發行商級別的抓取。
 premium_pct = (市價 - 淨值) / 淨值 × 100（正=溢價、負=折價）
 """
-import asyncio
 import logging
 from datetime import date, datetime
 
@@ -14,25 +18,27 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import UpstreamError
 from app.models import EtfNav, Stock
-from app.services.time_service import market_today
 
 logger = logging.getLogger(__name__)
 
 TW_ETF_URL = "https://mis.twse.com.tw/stock/data/all_etf.txt"
+SUPPORTED_MARKETS = ("TW",)
 
 
 async def snapshot_premiums(db: Session, market: str) -> dict:
-    """對該市場所有已追蹤 ETF 抓當日淨值快照。"""
+    """對該市場所有已追蹤 ETF 抓當日淨值快照（僅台股）。"""
+    if market not in SUPPORTED_MARKETS:
+        return {
+            "market": market, "updated": 0,
+            "skipped": "此市場不提供折溢價（免費資料源無 ETF 淨值）",
+        }
     etfs = db.execute(
         select(Stock).where(Stock.market == market, Stock.kind == "etf")
     ).scalars().all()
     if not etfs:
         return {"market": market, "updated": 0, "note": "無追蹤中的 ETF"}
 
-    if market == "TW":
-        rows = await _tw_snapshot({e.symbol for e in etfs})
-    else:
-        rows = await _us_snapshot([e.symbol for e in etfs])
+    rows = await _tw_snapshot({e.symbol for e in etfs})
 
     updated = 0
     for etf in etfs:
@@ -54,11 +60,10 @@ async def snapshot_premiums(db: Session, market: str) -> dict:
     db.commit()
     logger.info("premium snapshot %s: %d/%d updated", market, updated, len(etfs))
     if updated == 0:
-        # 有追蹤 ETF 卻一筆都沒更新＝上游整批失敗（如 Yahoo 對機房 IP 限流）。
+        # 有追蹤 ETF 卻一筆都沒更新＝上游整批失敗。
         # 必須讓工作失敗才會出現在通知裡——曾因此無聲停更一週（卡在 07-14）。
         raise UpstreamError(
-            f"{market} NAV 快照零更新（{len(etfs)} 檔 ETF 全數抓取失敗，"
-            "美股常見原因：Yahoo 限流機房 IP）"
+            f"{market} NAV 快照零更新（{len(etfs)} 檔 ETF 全數抓取失敗）"
         )
     return {"market": market, "updated": updated, "total_etfs": len(etfs)}
 
@@ -90,37 +95,6 @@ async def _tw_snapshot(symbols: set[str]) -> dict[str, tuple[float, float, date]
             except (KeyError, TypeError, ValueError):
                 continue
             out[symbol] = (nav, price, snap_date)
-    return out
-
-
-async def _us_snapshot(symbols: list[str]) -> dict[str, tuple[float, float, date]]:
-    import yfinance as yf
-    from yfinance.exceptions import YFRateLimitError
-
-    def _one(symbol: str) -> tuple[float, float, date] | None:
-        info = yf.Ticker(symbol).info
-        nav = info.get("navPrice")
-        price = info.get("regularMarketPrice")
-        if nav and price:
-            return float(nav), float(price), market_today("US")
-        return None
-
-    # 逐檔序列化＋間隔：Yahoo 對機房 IP 限流敏感，並發突發最容易觸發 429
-    out: dict[str, tuple[float, float, date]] = {}
-    for i, symbol in enumerate(symbols):
-        if i:
-            await asyncio.sleep(2)
-        try:
-            result = await asyncio.to_thread(_one, symbol)
-        except YFRateLimitError as exc:
-            # 已被限流，續打只會延長封鎖窗口——直接放棄本輪剩餘標的
-            logger.warning("yfinance nav 被限流（%s），中止本輪剩餘抓取", exc)
-            break
-        except Exception as exc:
-            logger.warning("yfinance nav %s failed: %s", symbol, exc)
-            continue
-        if result is not None:
-            out[symbol] = result
     return out
 
 
