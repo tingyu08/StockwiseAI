@@ -29,7 +29,9 @@ export function useUsage() {
   });
 }
 
-function useRunAnalysis(kind: "routine" | "deep", symbol: string) {
+// 註：後端另有 analysis:deep（3.6 Flash 深度分析），但個股頁的深度分析
+// 按鈕已移除，前端無入口，故此處只保留 routine。要重新啟用時再加回。
+function useRunAnalysis(kind: "routine", symbol: string) {
   const market = useMarketStore((s) => s.market);
   const qc = useQueryClient();
   return useMutation({
@@ -52,8 +54,4 @@ function useRunAnalysis(kind: "routine" | "deep", symbol: string) {
 
 export function useRunRoutine(symbol: string) {
   return useRunAnalysis("routine", symbol);
-}
-
-export function useRunDeep(symbol: string) {
-  return useRunAnalysis("deep", symbol);
 }

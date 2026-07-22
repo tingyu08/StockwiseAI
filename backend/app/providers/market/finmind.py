@@ -2,9 +2,11 @@
 
 備援 TWSE OpenAPI 於 Phase 3（折溢價）加入。
 """
+import asyncio
 import logging
 from asyncio import sleep
 from datetime import date
+from time import monotonic
 
 import httpx
 
@@ -16,6 +18,19 @@ logger = logging.getLogger(__name__)
 
 API_URL = "https://api.finmindtrade.com/api/v4/data"
 RETRIES = 3
+
+# TaiwanStockInfo 是全上市櫃目錄（數千筆、數 MB），一天內不會變動。
+# 沒有快取的話「搜尋」與「新增自選股」（sync_service.ensure_stock）
+# 每次都要重抓一整份，浪費 FinMind 免費配額（600 req/hr）也拖慢新增。
+CATALOG_TTL_SECONDS = 24 * 3600
+_catalog: tuple[float, list[dict]] | None = None
+_catalog_lock = asyncio.Lock()
+
+
+def _cached_catalog() -> list[dict] | None:
+    if _catalog and monotonic() - _catalog[0] < CATALOG_TTL_SECONDS:
+        return _catalog[1]
+    return None
 
 
 class FinMindProvider(MarketDataProvider):
@@ -42,8 +57,20 @@ class FinMindProvider(MarketDataProvider):
                         await sleep(0.5 * (2 ** (attempt - 1)))
         raise UpstreamError(f"FinMind {dataset} 連續 {RETRIES} 次失敗") from last_error
 
+    async def _stock_catalog(self) -> list[dict]:
+        """全市場股票目錄，含 TTL 快取與單飛鎖（避免並發時重複下載）。"""
+        global _catalog
+        if (cached := _cached_catalog()) is not None:
+            return cached
+        async with _catalog_lock:
+            if (cached := _cached_catalog()) is not None:
+                return cached  # 等鎖期間已有人填好
+            rows = await self._fetch("TaiwanStockInfo")
+            _catalog = (monotonic(), rows)
+            return rows
+
     async def search_stocks(self, query: str) -> list[StockInfo]:
-        rows = await self._fetch("TaiwanStockInfo")
+        rows = await self._stock_catalog()
         seen: set[str] = set()
         results = []
         for r in rows:

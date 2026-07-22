@@ -34,19 +34,33 @@ class IndexQuote:
     change_pct: float
 
 
-def _history(ticker: str, period_days: int) -> pd.DataFrame | None:
+def _history(
+    ticker: str, period_days: int, raw_cache: dict[str, pd.DataFrame | None] | None = None
+) -> pd.DataFrame | None:
     """近 N 日日線（含 Close/High/Low）。
 
     FinMind 為主（官方 API，雲端 IP 不被限流）；查無或失敗才退 yfinance
     （Yahoo 對機房 IP 常限流，實務上只在本機開發時派得上用場）。
+
+    raw_cache：FinMind 一律抓固定天數（與 period_days 無關），同一次簡報
+    組裝內重用即可——美股的 ^GSPC 同時是全球指數也是本地大盤，沒有快取
+    就會對同一代號連抓兩趟。
     """
-    try:
-        df = finmind_us.fetch_daily(ticker)
-        if not df.empty:
-            return df.tail(period_days).set_index("Date")
+    df: pd.DataFrame | None
+    if raw_cache is not None and ticker in raw_cache:
+        df = raw_cache[ticker]
+    else:
+        try:
+            df = finmind_us.fetch_daily(ticker)
+        except Exception as exc:
+            logger.warning("FinMind %s failed: %s（改試 yfinance）", ticker, exc)
+            df = None
+        if raw_cache is not None:
+            raw_cache[ticker] = df
+    if df is not None and not df.empty:
+        return df.tail(period_days).set_index("Date")
+    if df is not None:
         logger.warning("FinMind %s 查無資料（改試 yfinance）", ticker)
-    except Exception as exc:
-        logger.warning("FinMind %s failed: %s（改試 yfinance）", ticker, exc)
     try:
         hist = yf.Ticker(ticker).history(
             period=f"{period_days}d", interval="1d", auto_adjust=False
@@ -59,8 +73,10 @@ def _history(ticker: str, period_days: int) -> pd.DataFrame | None:
         return None
 
 
-def _fetch_quote(ticker: str, name: str) -> IndexQuote | None:
-    hist = _history(ticker, 10)
+def _fetch_quote(
+    ticker: str, name: str, raw_cache: dict[str, pd.DataFrame | None] | None = None
+) -> IndexQuote | None:
+    hist = _history(ticker, 10, raw_cache)
     if hist is None:
         return None
     closes = hist["Close"].dropna()
@@ -70,9 +86,11 @@ def _fetch_quote(ticker: str, name: str) -> IndexQuote | None:
     return IndexQuote(name=name, close=round(last, 2), change_pct=round((last - prev) / prev * 100, 2))
 
 
-def _fetch_local_levels(ticker: str) -> dict | None:
+def _fetch_local_levels(
+    ticker: str, raw_cache: dict[str, pd.DataFrame | None] | None = None
+) -> dict | None:
     """本地大盤近 90 日：現價、MA20/60、近 20 日高低（支撐壓力的技術依據）。"""
-    hist = _history(ticker, 130)
+    hist = _history(ticker, 130, raw_cache)
     if hist is None:
         return None
     closes = hist["Close"].dropna()
@@ -212,19 +230,22 @@ async def build_market_context(market: str) -> str:
     """組裝市場環境文字摘要（抓不到的項目誠實標示，不讓 AI 腦補）。"""
 
     def _gather() -> str:
+        # 同一次組裝內每個代號只抓一次：美股的 ^GSPC 同時列在全球指數與
+        # 本地大盤，沒有這層快取就會對它連抓兩趟相同的日線
+        raw_cache: dict[str, pd.DataFrame | None] = {}
         lines: list[str] = ["【全球指數（最近收盤 vs 前日）】"]
         for ticker, name in GLOBAL_TICKERS.items():
-            q = _fetch_quote(ticker, name)
+            q = _fetch_quote(ticker, name, raw_cache)
             lines.append(
                 f"- {name}：{q.close:,}（{q.change_pct:+.2f}%）" if q else f"- {name}：資料暫缺"
             )
-        adr = _fetch_quote(*ADR_TICKER)
+        adr = _fetch_quote(*ADR_TICKER, raw_cache)
         lines.append(
             f"- 台積電 ADR：{adr.close}（{adr.change_pct:+.2f}%）" if adr else "- 台積電 ADR：資料暫缺"
         )
 
         idx_ticker, idx_name = LOCAL_INDEX[market]
-        levels = _fetch_local_levels(idx_ticker)
+        levels = _fetch_local_levels(idx_ticker, raw_cache)
         lines.append(f"\n【{idx_name} 技術位階】")
         if levels:
             lines.append(

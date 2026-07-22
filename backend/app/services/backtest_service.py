@@ -70,6 +70,20 @@ def run_backtest(
     )
     ind = compute_indicators(df)
     signals = _signals(strategy, df, ind)  # 每日目標持倉 0/1（收盤時決定）
+
+    # 上面多抓的 120 天只是暖身，讓 MA60/RSI 等指標在視窗起點就有效；
+    # 績效必須只涵蓋使用者要求的 range_days，否則 annualized/sharpe/
+    # buy_hold/period 全都落在比要求更長的區間，且前段指標尚未生效、
+    # 持倉恆為 0 的平盤日會系統性拉低年化與 Sharpe。
+    window_start = market_today(market) - timedelta(days=range_days)
+    mask = (df["date"] >= window_start).values
+    if mask.any():
+        first = int(mask.argmax())
+        df = df.iloc[first:].reset_index(drop=True)
+        signals = signals[first:]
+    if len(df) < 2:
+        raise NotFoundError(f"{symbol} 於指定區間資料不足（{len(df)} 筆）")
+
     return _simulate(market, df, signals, strategy, slippage_bps=slippage_bps)
 
 

@@ -206,3 +206,60 @@ async def test_stock_sync_job_dispatches_by_scalar_identity(monkeypatch):
 
     assert seen == {"stock_id": stock_id, "market": "TW", "symbol": "QJOB"}
     assert result == {"market": "TW", "symbol": "QJOB", "synced_rows": 7}
+
+
+async def test_worker_loop_survives_transient_db_error(monkeypatch):
+    """暫時性 DB 例外只該損失一輪——worker 不能靜默死亡。
+
+    此 task 由 lifespan create_task 建立且無人 await，一旦例外逸出迴圈，
+    排程會持續入列卻再也沒人執行（全站排程停擺且無錯誤訊息）。
+    """
+    import asyncio
+
+    from app.services import job_service
+
+    calls = {"claim": 0}
+
+    def flaky_claim(now=None):
+        calls["claim"] += 1
+        if calls["claim"] == 1:
+            raise RuntimeError("connection reset by peer")  # 模擬 DB 斷線
+        return None  # 之後佇列為空
+
+    monkeypatch.setattr(job_service, "claim_next_job", flaky_claim)
+    monkeypatch.setattr(job_service, "recover_stale_jobs", lambda now=None: 0)
+
+    task = asyncio.create_task(job_service.run_worker_loop(poll_interval=0.01))
+    await asyncio.sleep(0.15)
+    still_running = not task.done()
+    task.cancel()
+    with __import__("contextlib").suppress(asyncio.CancelledError):
+        await task
+
+    assert still_running, "worker 迴圈在暫時性 DB 錯誤後停擺了"
+    assert calls["claim"] > 1, "第一次失敗後沒有繼續輪詢"
+
+
+async def test_worker_loop_sweeps_stale_jobs_periodically(monkeypatch):
+    """閒置時不該每輪都掃 stale lease（原本每秒一次 SELECT）。"""
+    import asyncio
+
+    from app.services import job_service
+
+    sweeps = {"n": 0}
+
+    def counting_sweep(now=None):
+        sweeps["n"] += 1
+        return 0
+
+    monkeypatch.setattr(job_service, "claim_next_job", lambda now=None: None)
+    monkeypatch.setattr(job_service, "recover_stale_jobs", counting_sweep)
+
+    task = asyncio.create_task(job_service.run_worker_loop(poll_interval=0.01))
+    await asyncio.sleep(0.2)  # 約 20 輪輪詢
+    task.cancel()
+    with __import__("contextlib").suppress(asyncio.CancelledError):
+        await task
+
+    # 掃描週期 30 秒 → 這段期間只該有啟動時的那一次
+    assert sweeps["n"] == 1, f"stale 掃描次數異常：{sweeps['n']}"

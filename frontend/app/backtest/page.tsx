@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   CartesianGrid,
   Line,
@@ -45,6 +45,11 @@ interface BacktestResult {
   disclaimer: string;
 }
 
+/** 後端 range 為 0~200 bps（見 api/v1/backtest.py 的 Field 約束）。 */
+function clampSlippage(value: number): number {
+  return Math.min(200, Math.max(0, Math.round(value)));
+}
+
 const RANGE_OPTS = [
   { days: 365, label: "1 年" },
   { days: 730, label: "2 年" },
@@ -62,7 +67,28 @@ export default function BacktestPage() {
   const [symbol, setSymbol] = useState("");
   const [strategy, setStrategy] = useState("ma_cross");
   const [rangeDays, setRangeDays] = useState(365);
+  // 滑價是自由輸入，若直接進 queryKey 會變成「每按一鍵打一次完整回測」
+  // （5→125 就是三次）。輸入文字與送出值分離，靜止 400ms 後才 commit。
+  const [slippageInput, setSlippageInput] = useState("5");
   const [slippageBps, setSlippageBps] = useState(5);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      const parsed = Number(slippageInput);
+      if (slippageInput.trim() === "" || !Number.isFinite(parsed)) return;
+      setSlippageBps(clampSlippage(parsed));
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [slippageInput]);
+
+  // 失焦時把顯示值正規化（超範圍、空白、小數）
+  const commitSlippage = (raw: string) => {
+    const parsed = Number(raw);
+    const next =
+      raw.trim() === "" || !Number.isFinite(parsed) ? 0 : clampSlippage(parsed);
+    setSlippageBps(next);
+    setSlippageInput(String(next));
+  };
 
   // 標的/策略/期間/滑價一變就自動重跑（結果為確定性計算，當 query 快取）
   const run = useQuery({
@@ -110,8 +136,9 @@ export default function BacktestPage() {
               type="number"
               min={0}
               max={200}
-              value={slippageBps}
-              onChange={(event) => setSlippageBps(Number(event.target.value))}
+              value={slippageInput}
+              onChange={(event) => setSlippageInput(event.target.value)}
+              onBlur={(event) => commitSlippage(event.target.value)}
               className="w-24 rounded-lg border border-neutral-300 bg-transparent px-3 py-2 dark:border-neutral-700"
             />
           </label>

@@ -169,3 +169,34 @@ def test_premium_alert_on_non_etf_rejected(client):
         json={"market": "TW", "symbol": "7003", "kind": "premium_below", "threshold": -3},
     )
     assert res.status_code == 404
+
+
+def test_backtest_window_excludes_indicator_warmup():
+    """暖身用的 120 天不得混進績效區間。
+
+    多抓 120 天是為了讓 MA60/RSI 在視窗起點就有效；但若不切回
+    range_days，annualized/sharpe/buy_hold/period 都會落在比使用者
+    要求更長的區間，且前段未持倉的平盤日會系統性拉低數字。
+    """
+    db = SessionLocal()
+    try:
+        # 600 個交易日 ≈ 涵蓋 range_days + 120 天緩衝仍有餘裕
+        stock = _seed(db, "7301", [100 + i * 0.1 for i in range(600)])
+        result = run_backtest(db, "TW", "7301", "ma_cross", range_days=365)
+
+        window_start = date.today() - timedelta(days=365)
+        period_start = date.fromisoformat(result["period"]["start"])
+        assert period_start >= window_start, (
+            f"回測起點 {period_start} 早於要求的 {window_start}（暖身資料混入績效）"
+        )
+
+        # 權益曲線也不得含視窗外的日期
+        first_curve_date = date.fromisoformat(result["equity_curve"][0]["date"])
+        assert first_curve_date >= window_start
+
+        # 365 天視窗約 250 個交易日；若含 120 天緩衝會膨脹到 330+
+        assert len(result["equity_curve"]) < 300, (
+            f"權益曲線 {len(result['equity_curve'])} 筆，疑似仍含暖身區間"
+        )
+    finally:
+        db.close()

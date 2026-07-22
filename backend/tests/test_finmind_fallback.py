@@ -285,3 +285,56 @@ async def test_finmind_provider_retries_status_errors(monkeypatch):
     assert rows == [{"stock_id": "2330"}]
     assert calls == 2
     assert delays == [pytest.approx(0.5)]
+
+
+# ---- 效能：避免重複下載 ----
+
+async def test_stock_catalog_is_cached(monkeypatch):
+    """TaiwanStockInfo 是數 MB 全市場目錄：搜尋與新增自選股不該每次重抓。"""
+    from app.providers.market import finmind as finmind_mod
+
+    finmind_mod._catalog = None  # 清掉其他測試可能留下的快取
+    calls = {"n": 0}
+
+    async def counting_fetch(self, dataset, **params):
+        calls["n"] += 1
+        return [
+            {"stock_id": "2330", "stock_name": "台積電", "industry_category": "半導體業"}
+        ]
+
+    monkeypatch.setattr(finmind_mod.FinMindProvider, "_fetch", counting_fetch)
+    provider = finmind_mod.FinMindProvider()
+    try:
+        first = await provider.search_stocks("2330")
+        second = await provider.search_stocks("台積")
+        assert first[0].symbol == "2330" and second[0].symbol == "2330"
+        assert calls["n"] == 1, f"目錄被下載了 {calls['n']} 次，TTL 快取沒生效"
+    finally:
+        finmind_mod._catalog = None
+
+
+async def test_us_market_context_fetches_gspc_once(monkeypatch):
+    """^GSPC 同時列在全球指數與美股本地大盤，一次簡報只該抓一趟。"""
+    from app.services import market_context
+
+    dates = pd.date_range("2025-09-01", periods=200, freq="D")
+    frame = pd.DataFrame({
+        "Date": dates,
+        "Open": [100.0 + i for i in range(200)],
+        "High": [101.0 + i for i in range(200)],
+        "Low": [99.0 + i for i in range(200)],
+        "Close": [100.0 + i for i in range(200)],
+        "Volume": [1000.0] * 200,
+    })
+    calls: list[str] = []
+
+    def counting_fetch(symbol, start=None, end=None):
+        calls.append(symbol)
+        return frame.copy()
+
+    monkeypatch.setattr(market_context.finmind_us, "fetch_daily", counting_fetch)
+
+    text = await market_context.build_market_context("US")
+
+    assert "S&P 500" in text
+    assert calls.count("^GSPC") == 1, f"^GSPC 被抓了 {calls.count('^GSPC')} 次"

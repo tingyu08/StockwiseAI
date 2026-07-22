@@ -51,9 +51,21 @@ def orders_view(market: Market, db: Session = Depends(get_db)) -> Envelope:
         .order_by(SimOrder.created_at.desc())
         .limit(200)
     ).all()
+    # 一次撈齊本頁的 AI 報告：逐筆 db.get 是 N+1（最壞 200 次額外查詢）
+    report_ids = {o.ai_report_id for o, _ in rows if o.ai_report_id}
+    reports = (
+        {
+            r.id: r
+            for r in db.execute(
+                select(AiReport).where(AiReport.id.in_(report_ids))
+            ).scalars()
+        }
+        if report_ids
+        else {}
+    )
     out = []
     for order, stock in rows:
-        report = db.get(AiReport, order.ai_report_id) if order.ai_report_id else None
+        report = reports.get(order.ai_report_id)
         out.append(
             {
                 "id": order.id,
@@ -61,8 +73,10 @@ def orders_view(market: Market, db: Session = Depends(get_db)) -> Envelope:
                 "name": stock.name,
                 "side": order.side,
                 "qty": float(order.qty),
-                "fill_price": float(order.fill_price) if order.fill_price else None,
-                "fee": float(order.fee) if order.fee else None,
+                # is not None：美股手續費恆為 0，真值判斷會把它變成 null，
+                # 前端就分不清「免手續費」與「尚未計費」
+                "fill_price": float(order.fill_price) if order.fill_price is not None else None,
+                "fee": float(order.fee) if order.fee is not None else None,
                 "status": order.status,
                 "decided_by": order.decided_by,
                 "fill_kind": order.fill_kind,

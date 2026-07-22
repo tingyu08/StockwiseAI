@@ -16,6 +16,7 @@ from app.models import JobRun
 
 DEFAULT_LEASE_SECONDS = 120
 HEARTBEAT_SECONDS = 30
+STALE_SWEEP_SECONDS = 30
 logger = logging.getLogger(__name__)
 Dispatcher = Callable[[str, dict], Awaitable[dict | None]]
 
@@ -308,12 +309,30 @@ async def execute_claimed_job(
 
 
 async def run_worker_loop(poll_interval: float = 1.0) -> None:
-    """Continuously recover/claim jobs. Safe to run in multiple processes."""
-    recover_stale_jobs()
+    """Continuously recover/claim jobs. Safe to run in multiple processes.
+
+    迴圈本體整段包例外處理：本 task 由 lifespan 以 create_task 建立後無人
+    await，任何逸出的例外都會靜默終結 worker——排程仍持續入列卻再也沒人
+    執行（單機部署等同全站排程停擺且毫無錯誤訊息）。暫時性 DB 故障
+    （連線被切、冷啟逾時）只該損失一輪，不該讓 worker 永久死亡。
+
+    stale lease 掃描改為固定週期而非每輪：閒置時原本每秒一次 SELECT，
+    一天下來近 9 萬次無謂查詢。
+    """
+    last_sweep = float("-inf")
     while True:
-        run_id = claim_next_job()
-        if run_id is None:
+        try:
+            now = asyncio.get_running_loop().time()
+            if now - last_sweep >= STALE_SWEEP_SECONDS:
+                recover_stale_jobs()
+                last_sweep = now
+            run_id = claim_next_job()
+            if run_id is None:
+                await asyncio.sleep(poll_interval)
+                continue
+            await execute_claimed_job(run_id)
+        except asyncio.CancelledError:
+            raise  # 關機時的正常取消，必須往外傳
+        except Exception:
+            logger.exception("worker loop iteration failed; continuing")
             await asyncio.sleep(poll_interval)
-            recover_stale_jobs()
-            continue
-        await execute_claimed_job(run_id)
