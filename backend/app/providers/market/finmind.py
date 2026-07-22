@@ -122,3 +122,56 @@ class FinMindProvider(MarketDataProvider):
             start_date=start.isoformat(),
             end_date=end.isoformat(),
         )
+
+    async def _by_symbol(self, dataset: str, symbol: str, start: date) -> list[dict]:
+        return await self._fetch(dataset, data_id=symbol, start_date=start.isoformat())
+
+    async def get_short_sale_balances(self, symbol: str, start: date) -> list[dict]:
+        """信用額度總量管制餘額：含借券賣出（SBL）餘額，比券資比更完整的空方壓力。"""
+        return await self._by_symbol("TaiwanDailyShortSaleBalances", symbol, start)
+
+    async def get_short_sale_suspension(self, symbol: str, start: date) -> list[dict]:
+        """暫停融券期間與原因（除權息、軋空管制等）。"""
+        return await self._by_symbol("TaiwanStockMarginShortSaleSuspension", symbol, start)
+
+    async def get_income_statement(self, symbol: str, start: date) -> list[dict]:
+        """綜合損益表（季）：Revenue／GrossProfit／OperatingIncome／IncomeAfterTaxes／EPS。"""
+        return await self._by_symbol("TaiwanStockFinancialStatements", symbol, start)
+
+    async def get_balance_sheet(self, symbol: str, start: date) -> list[dict]:
+        """資產負債表（季）：TotalAssets／Liabilities／CurrentAssets／CurrentLiabilities 等。"""
+        return await self._by_symbol("TaiwanStockBalanceSheet", symbol, start)
+
+    async def get_cash_flows(self, symbol: str, start: date) -> list[dict]:
+        """現金流量表（季）：NetCashInflowFromOperatingActivities 等。"""
+        return await self._by_symbol("TaiwanStockCashFlowsStatement", symbol, start)
+
+    # ---- 全市場資料（不帶 data_id，全體共用一次請求）----
+
+    async def get_active_etf_list(self) -> list[dict]:
+        """主動式 ETF 清單——主動式與被動指數 ETF 的分析邏輯不同，需要區分。"""
+        return await self._fetch("TaiwanStockActiveETFInfo")
+
+    async def get_total_margin_trading(self, start: date) -> list[dict]:
+        """整體市場融資融券餘額：全市場散戶槓桿水位。"""
+        return await self._fetch(
+            "TaiwanStockTotalMarginPurchaseShortSale", start_date=start.isoformat()
+        )
+
+    async def get_total_return_index(self, start: date) -> list[dict]:
+        """加權報酬指數（含息），比純價格指數更適合當報酬比較基準。"""
+        return await self._fetch(
+            "TaiwanStockTotalReturnIndex", data_id="TAIEX", start_date=start.isoformat()
+        )
+
+    async def get_interest_rate(self, bank: str, start: date) -> list[dict]:
+        """央行政策利率（data_id 如 FED、CBC）。"""
+        return await self._fetch(
+            "InterestRate", data_id=bank, start_date=start.isoformat()
+        )
+
+    async def get_exchange_rate(self, currency: str, start: date) -> list[dict]:
+        """外幣對台幣匯率（data_id 如 USD）。"""
+        return await self._fetch(
+            "TaiwanExchangeRate", data_id=currency, start_date=start.isoformat()
+        )
