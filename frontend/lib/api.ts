@@ -199,14 +199,17 @@ function parseRetryAfter(response: Response): number | null {
 function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.reject(new DOMException("Aborted", "AbortError"));
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(resolve, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timeout);
-        reject(new DOMException("Aborted", "AbortError"));
-      },
-      { once: true },
-    );
+    // { once: true } 只在 abort 真的觸發時才自動解除；正常逾時 resolve 的路徑
+    // 必須自己移除，否則 waitForJob 每輪輪詢都在同一個 signal 上疊一個監聽器
+    // （10 分鐘 / 2 秒 ≈ 300 個閉包）。
+    const onAbort = () => {
+      clearTimeout(timeout);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+    const timeout = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
   });
 }

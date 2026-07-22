@@ -11,6 +11,7 @@ import logging
 from datetime import date, datetime, timedelta, timezone
 
 from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import DailyPrice, SimAccount, SimOrder, Stock
@@ -89,13 +90,24 @@ def fill_pending_orders(db: Session, market: str) -> dict:
             # claim 是原生 UPDATE（session 內屬性仍是 'pending'），
             # 還原必須也走 UPDATE——只改屬性會被 SQLAlchemy 視為無變更而不寫回，
             # 訂單將永久卡在 'filling' 無法再被撮合
-            db.execute(
-                update(SimOrder)
-                .where(SimOrder.id == order.id)
-                .values(status="pending")
-                .execution_options(synchronize_session=False)
-            )
-            order.status = "pending"
+            try:
+                with db.begin_nested():
+                    db.execute(
+                        update(SimOrder)
+                        .where(SimOrder.id == order.id)
+                        .values(status="pending")
+                        .execution_options(synchronize_session=False)
+                    )
+                order.status = "pending"
+            except IntegrityError:
+                # 'filling' 期間該單不受 partial unique index 保護，哨兵可能已為
+                # 同一 (account, stock) 建了新的 pending 單；還原就會撞索引。
+                # 用 savepoint 隔離：只放棄這一筆的還原，不讓整批已成交的
+                # 訂單隨著外層 rollback 一起消失。
+                logger.warning(
+                    "訂單 %s 還原 pending 撞唯一索引（哨兵已建新單），維持 filling 待下輪",
+                    order.id,
+                )
             waiting += 1  # 下一個交易日資料尚未同步
             continue
 

@@ -74,7 +74,10 @@ async def build_context(db: Session, stock: Stock) -> AnalysisContext:
     lines = [
         f"名稱：{stock.name}（{'ETF' if stock.kind == 'etf' else '個股'}）",
         f"最新收盤（{last.date}）：{last.close} {stock.currency}",
-        f"漲跌：5日 {chg['5d']:+.1f}%、20日 {chg['20d']:+.1f}%、60日 {chg['60d']:+.1f}%",
+        # 資料不足要如實標示：填 0.0% 等於告訴 AI「這段完全持平」，
+        # 而 SYSTEM_PROMPT 要求它只根據提供的資料判斷——虛構的是我們
+        f"漲跌：5日 {_pct_text(chg['5d'])}、20日 {_pct_text(chg['20d'])}"
+        f"、60日 {_pct_text(chg['60d'])}",
         f"60日高低：{high_60} / {low_60}（現價位於 {(closes[-1]-low_60)/(high_60-low_60)*100 if high_60>low_60 else 50:.0f}% 位置）",
         f"5日均量/20日均量比：{vol_recent/vol_prior:.2f}",
     ]
@@ -347,11 +350,16 @@ def _norm_symbol(raw: str) -> str:
     return s.split()[0] if s else s
 
 
-def _pct(closes: list[float], days: int) -> float:
+def _pct(closes: list[float], days: int) -> float | None:
+    """區間漲跌幅；歷史不足或基準價為 0 時回 None（不可假裝成 0%）。"""
     if len(closes) <= days:
-        return 0.0
+        return None
     base = closes[-days - 1]
-    return (closes[-1] - base) / base * 100 if base else 0.0
+    return (closes[-1] - base) / base * 100 if base else None
+
+
+def _pct_text(value: float | None) -> str:
+    return f"{value:+.1f}%" if value is not None else "資料不足"
 
 
 def _f(v) -> str:

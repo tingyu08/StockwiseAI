@@ -6,6 +6,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 from sqlalchemy import delete, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal
@@ -46,7 +47,18 @@ async def ensure_stock(db: Session, market: str, symbol: str) -> Stock:
         currency=info.currency, kind=info.kind,
     )
     db.add(stock)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # 併發請求（如同時新增同一檔、或分析流程與新增重疊）已先建好：
+        # 撞 uq_stocks_market_symbol 應收斂到同一筆，而非冒泡成 500
+        db.rollback()
+        existing = db.execute(
+            select(Stock).where(Stock.market == market, Stock.symbol == symbol)
+        ).scalar_one_or_none()
+        if existing is None:
+            raise
+        return existing
     db.refresh(stock)
     return stock
 

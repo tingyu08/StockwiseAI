@@ -21,6 +21,25 @@ PREMIUM_MODEL = "gemini-3.6-flash"
 PREMIUM_CHAIN = [PREMIUM_MODEL, *ROUTINE_CHAIN]
 
 
+def validate_configured_models() -> None:
+    """啟動時確認降級鏈用到的模型都在 quotas.yaml 裡。
+
+    少了設定的話，ensure_quota 會丟「未設定 X 的額度」的
+    QuotaExceededError——看起來跟「今日額度用盡」一模一樣，
+    模型名稱打錯字會被偽裝成正常的限流，很難查。
+    """
+    from app.core.config import get_settings
+
+    configured = set(get_settings().load_quotas())
+    referenced = {*ROUTINE_CHAIN, *PREMIUM_CHAIN}
+    missing = sorted(referenced - configured)
+    if missing:
+        raise ValueError(
+            f"quotas.yaml 缺少模型設定：{', '.join(missing)}"
+            f"（已設定：{', '.join(sorted(configured))}）"
+        )
+
+
 def _next_step(chain: list[str], index: int) -> str:
     return "falling back to next model" if index + 1 < len(chain) else "no models remaining"
 

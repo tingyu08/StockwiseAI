@@ -221,3 +221,14 @@ def test_maintenance_sweeps_stale_reservations():
         ).delete()
         db.commit()
         db.close()
+
+
+def test_validate_configured_models_catches_typo(monkeypatch):
+    """模型名稱打錯字必須在啟動時就炸，而不是偽裝成「額度用盡」。"""
+    from app.providers.ai import router as ai_router
+
+    ai_router.validate_configured_models()  # 目前設定應該是對的
+
+    monkeypatch.setattr(ai_router, "ROUTINE_CHAIN", ["gemini-3.5-flash-litee"])
+    with pytest.raises(ValueError, match="quotas.yaml 缺少模型設定"):
+        ai_router.validate_configured_models()

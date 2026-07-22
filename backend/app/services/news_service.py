@@ -10,6 +10,7 @@ import logging
 from datetime import date, timedelta
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import AiReport, Stock
@@ -47,7 +48,17 @@ async def run_news_research(
     row.action = None
     row.confidence = None
     row.payload_json = json.dumps({"summary": summary}, ensure_ascii=False)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # 併發（手動觸發撞上排程）已寫入同一份（stock_id, trade_date, news）。
+        # 不 rollback 的話 session 進入 PendingRollbackError 狀態，
+        # news_research_daily 迴圈中後續每一檔都會連帶失敗。
+        db.rollback()
+        existing = _get_report(db, stock.id, since=today)
+        if existing is None:
+            raise
+        return existing
     db.refresh(row)
     return row
 

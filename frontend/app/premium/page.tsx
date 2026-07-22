@@ -67,7 +67,18 @@ export default function PremiumPage() {
                 <tr
                   key={r.symbol}
                   onClick={() => setSelected(r.symbol)}
-                  className={`cursor-pointer border-b border-neutral-100 last:border-0 hover:bg-neutral-50 dark:border-neutral-800/50 dark:hover:bg-neutral-900 ${
+                  // 選取 ETF 看折溢價歷史是本頁的主要互動，只綁 onClick 會讓
+                  // 純鍵盤與螢幕報讀器使用者完全無法使用
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={selected === r.symbol}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelected(r.symbol);
+                    }
+                  }}
+                  className={`cursor-pointer border-b border-neutral-100 last:border-0 hover:bg-neutral-50 focus-visible:outline focus-visible:outline-2 focus-visible:outline-blue-500 dark:border-neutral-800/50 dark:hover:bg-neutral-900 ${
                     selected === r.symbol ? "bg-neutral-50 dark:bg-neutral-900" : ""
                   }`}
                 >

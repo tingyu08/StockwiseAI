@@ -1,5 +1,6 @@
 """併發競態：連按「產生今日簡報」不得重複扣 AI 額度，撞 UNIQUE 不得 500。"""
 import asyncio
+from types import SimpleNamespace
 from datetime import date, timedelta
 
 import pytest
@@ -316,3 +317,52 @@ async def test_run_batch_rebuilds_when_input_context_changes(monkeypatch):
         assert rows[0].input_hash
     finally:
         db.close()
+
+
+async def test_ensure_stock_converges_on_concurrent_insert(monkeypatch):
+    """並發新增同代號應收斂到同一筆 Stock，而非撞唯一約束冒 500。"""
+    from app.models import Stock
+    from app.services import sync_service
+
+    db = SessionLocal()
+    try:
+        symbol = "9301"
+        db.query(Stock).filter(Stock.market == "TW", Stock.symbol == symbol).delete()
+        db.commit()
+
+        async def fake_search(market, sym):
+            # 模擬「查詢期間另一個請求已建好」
+            other = SessionLocal()
+            if not other.query(Stock).filter(
+                Stock.market == "TW", Stock.symbol == symbol
+            ).first():
+                other.add(Stock(symbol=symbol, market="TW", name="搶先",
+                                currency="TWD", kind="stock"))
+                other.commit()
+            other.close()
+            return [SimpleNamespace(symbol=symbol, name="後到",
+                                    currency="TWD", kind="stock")]
+
+        monkeypatch.setattr(sync_service.market_data, "search_stocks", fake_search)
+
+        stock = await sync_service.ensure_stock(db, "TW", symbol)
+
+        assert stock.symbol == symbol
+        rows = db.query(Stock).filter(
+            Stock.market == "TW", Stock.symbol == symbol
+        ).all()
+        assert len(rows) == 1
+    finally:
+        db.query(Stock).filter(Stock.market == "TW", Stock.symbol == "9301").delete()
+        db.commit()
+        db.close()
+
+
+def test_pct_reports_insufficient_history_instead_of_flat():
+    """歷史不足要如實標示；填 0.0% 等於餵給 AI 一個捏造的「完全持平」。"""
+    from app.services.analysis_service import _pct, _pct_text
+
+    assert _pct([100.0, 101.0], 5) is None
+    assert _pct_text(None) == "資料不足"
+    assert _pct([100.0] * 5 + [110.0], 5) == pytest.approx(10.0)
+    assert _pct_text(10.0) == "+10.0%"

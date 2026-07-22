@@ -263,3 +263,51 @@ async def test_worker_loop_sweeps_stale_jobs_periodically(monkeypatch):
 
     # 掃描週期 30 秒 → 這段期間只該有啟動時的那一次
     assert sweeps["n"] == 1, f"stale 掃描次數異常：{sweeps['n']}"
+
+
+def test_retry_clears_idempotency_key():
+    """重試不得撞 active 唯一索引。
+
+    排程可能已用同一把 key 排了新的 queued 工作（enqueue_job 看不到
+    已 failed 的那筆），此時把舊的改回 queued 會違反
+    uq_job_runs_active_idempotency 而冒泡成 500。
+    """
+    from app.core.db import SessionLocal
+    from app.models import JobRun
+    from app.services import job_service
+
+    db = SessionLocal()
+    try:
+        failed = JobRun(
+            name="sync-tw", job_type="scheduled", payload_json="{}",
+            status="failed", attempts=1, max_attempts=1,
+            idempotency_key="scheduled:sync-tw-retry-test",
+        )
+        db.add(failed)
+        db.commit()
+        failed_id = failed.id
+
+        # 排程已排入同 key 的新工作
+        queued = JobRun(
+            name="sync-tw", job_type="scheduled", payload_json="{}",
+            status="queued", attempts=0, max_attempts=3,
+            idempotency_key="scheduled:sync-tw-retry-test",
+        )
+        db.add(queued)
+        db.commit()
+        queued_id = queued.id
+    finally:
+        db.close()
+
+    assert job_service.retry_job(failed_id) == failed_id  # 不該拋 IntegrityError
+
+    db = SessionLocal()
+    try:
+        row = db.get(JobRun, failed_id)
+        assert row.status == "queued"
+        assert row.idempotency_key is None
+        db.delete(row)
+        db.delete(db.get(JobRun, queued_id))
+        db.commit()
+    finally:
+        db.close()

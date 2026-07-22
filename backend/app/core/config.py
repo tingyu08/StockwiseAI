@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import Field, model_validator
+from pydantic import Field, PrivateAttr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     backup_dir: str = str(BASE_DIR / "data" / "backups")
 
     quotas_file: Path = BASE_DIR / "app" / "core" / "quotas.yaml"
+    _quotas_cache: dict[str, ModelQuota] | None = PrivateAttr(default=None)
 
     @model_validator(mode="after")
     def validate_environment_security(self) -> "Settings":
@@ -68,8 +69,17 @@ class Settings(BaseSettings):
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
     def load_quotas(self) -> dict[str, ModelQuota]:
-        raw = yaml.safe_load(self.quotas_file.read_text(encoding="utf-8"))
-        return {name: ModelQuota(**cfg) for name, cfg in raw["models"].items()}
+        """額度設定（啟動後不變，故只讀檔一次）。
+
+        每次 AI 呼叫的 ensure_quota 會連帶觸發 2 次以上的 load_quotas，
+        原本每次都重讀並重新解析 YAML——是 event loop 上不必要的阻塞 I/O。
+        """
+        if self._quotas_cache is None:
+            raw = yaml.safe_load(self.quotas_file.read_text(encoding="utf-8"))
+            self._quotas_cache = {
+                name: ModelQuota(**cfg) for name, cfg in raw["models"].items()
+            }
+        return self._quotas_cache
 
 
 @lru_cache

@@ -148,6 +148,11 @@ def retry_job(run_id: int) -> int:
         run.finished_at = None
         run.heartbeat_at = None
         run.lease_expires_at = None
+        # 清掉 idempotency_key：排程可能已用同一把 key 排了新的 queued 工作
+        # （enqueue_job 只看 active 狀態，看不到這筆 failed），此時把它改回
+        # queued 會撞 uq_job_runs_active_idempotency 冒泡成 500。
+        # 重試是明確的人工動作，不需要再受排隊去重保護。
+        run.idempotency_key = None
         db.commit()
         return run.id
     finally:

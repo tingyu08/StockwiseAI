@@ -12,6 +12,7 @@ from app.api.v1 import (
     simulation, stocks, usage, watchlist,
 )
 from app.core.config import get_settings
+from app.providers.ai.router import validate_configured_models
 from app.core.auth import require_login
 from app.core.exceptions import register_exception_handlers
 from app.core.logging_config import configure_sensitive_logging
@@ -61,6 +62,7 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     settings = get_settings()  # fail fast：缺必填環境變數這裡就會炸
+    validate_configured_models()  # 模型名稱與 quotas.yaml 對不上也在此就炸
     configure_sensitive_logging(settings)
     install_db_timing()
     app = FastAPI(title="stock-ai-advisor", version="0.1.0", lifespan=lifespan)
