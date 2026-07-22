@@ -152,26 +152,10 @@ class FinMindProvider(MarketDataProvider):
         """主動式 ETF 清單——主動式與被動指數 ETF 的分析邏輯不同，需要區分。"""
         return await self._fetch("TaiwanStockActiveETFInfo")
 
-    async def get_total_margin_trading(self, start: date) -> list[dict]:
-        """整體市場融資融券餘額：全市場散戶槓桿水位。"""
+    async def get_futures_institutional_investors(self, start: date) -> list[dict]:
+        """台指期（TX）三大法人未平倉——外資淨部位是大盤方向最前瞻的籌碼指標。"""
         return await self._fetch(
-            "TaiwanStockTotalMarginPurchaseShortSale", start_date=start.isoformat()
-        )
-
-    async def get_total_return_index(self, start: date) -> list[dict]:
-        """加權報酬指數（含息），比純價格指數更適合當報酬比較基準。"""
-        return await self._fetch(
-            "TaiwanStockTotalReturnIndex", data_id="TAIEX", start_date=start.isoformat()
-        )
-
-    async def get_interest_rate(self, bank: str, start: date) -> list[dict]:
-        """央行政策利率（data_id 如 FED、CBC）。"""
-        return await self._fetch(
-            "InterestRate", data_id=bank, start_date=start.isoformat()
-        )
-
-    async def get_exchange_rate(self, currency: str, start: date) -> list[dict]:
-        """外幣對台幣匯率（data_id 如 USD）。"""
-        return await self._fetch(
-            "TaiwanExchangeRate", data_id=currency, start_date=start.isoformat()
+            "TaiwanFuturesInstitutionalInvestors",
+            data_id="TX",
+            start_date=start.isoformat(),
         )

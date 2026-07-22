@@ -6,12 +6,14 @@ AI 只負責解讀，不虛構行情。
 import asyncio
 import logging
 from dataclasses import dataclass
+from datetime import timedelta
 
 import httpx
 import pandas as pd
 import yfinance as yf
 
 from app.providers.market import finmind_us
+from app.services.time_service import market_today
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +146,68 @@ def _fetch_tw_night_futures() -> dict | None:
         return None
 
 
+def parse_futures_positions(rows: list[dict]) -> list[dict] | None:
+    """台指期三大法人淨未平倉（口數）與較前一交易日的增減。
+
+    夜盤報價只說「隔夜漲跌」，未平倉部位說的是「法人押在哪一邊」——
+    外資淨空數萬口而指數還在漲，是典型的背離訊號。
+    """
+    if not rows:
+        return None
+    days = sorted({r["date"] for r in rows})
+    latest = days[-1]
+    prev = days[-2] if len(days) >= 2 else None
+
+    def nets(day: str) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for r in rows:
+            if r.get("date") != day:
+                continue
+            name = r.get("institutional_investors")
+            long_ = r.get("long_open_interest_balance_volume") or 0
+            short = r.get("short_open_interest_balance_volume") or 0
+            if name:
+                out[name] = long_ - short
+        return out
+
+    current, previous = nets(latest), nets(prev) if prev else {}
+    if not current:
+        return None
+    return [
+        {
+            "name": name,
+            "net": net,
+            "change": net - previous[name] if name in previous else None,
+        }
+        for name, net in current.items()
+    ]
+
+
+def _fetch_tw_futures_positions() -> list[dict] | None:
+    """同步取用（build_market_context 在 thread 中組裝，避免混用事件迴圈）。"""
+    from app.core.config import get_settings
+
+    try:
+        res = httpx.get(
+            "https://api.finmindtrade.com/api/v4/data",
+            params={
+                "dataset": "TaiwanFuturesInstitutionalInvestors",
+                "data_id": "TX",
+                "start_date": (market_today("TW") - timedelta(days=10)).isoformat(),
+                "token": get_settings().finmind_token,
+            },
+            timeout=30,
+        )
+        body = res.json()
+        if res.status_code != 200 or body.get("status") != 200:
+            logger.warning("台指期法人未平倉回應異常：%s", body.get("msg"))
+            return None
+        return parse_futures_positions(body.get("data") or [])
+    except Exception as exc:
+        logger.warning("台指期法人未平倉取得失敗：%s", exc)
+        return None
+
+
 async def build_market_context(market: str) -> str:
     """組裝市場環境文字摘要（抓不到的項目誠實標示，不讓 AI 腦補）。"""
 
@@ -179,6 +243,17 @@ async def build_market_context(market: str) -> str:
                     f"- 近月 {night['contract']} 夜盤最新 {night['night_last']:,.0f}"
                     f"（較日盤收盤 {night['day_close']:,.0f} 變動 {night['change_pct']:+.2f}%）"
                 )
+            else:
+                lines.append("- 資料暫缺")
+
+            lines.append("\n【台指期三大法人淨未平倉（法人押注方向）】")
+            positions = _fetch_tw_futures_positions()
+            if positions:
+                for p in positions:
+                    side = "淨多" if p["net"] >= 0 else "淨空"
+                    delta = (f"，較前日 {p['change']:+,} 口"
+                             if p["change"] is not None else "")
+                    lines.append(f"- {p['name']}：{side} {abs(p['net']):,} 口{delta}")
             else:
                 lines.append("- 資料暫缺")
         return "\n".join(lines)
