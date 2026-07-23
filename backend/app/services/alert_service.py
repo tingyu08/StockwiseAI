@@ -13,6 +13,9 @@ from app.services.time_service import utc_now_naive
 
 logger = logging.getLogger(__name__)
 
+# webhook 連續失敗達此次數即標記 failed，停止每輪重撈同一批事件
+MAX_NOTIFY_ATTEMPTS = 5
+
 
 def check_alerts(db: Session, market: str) -> dict:
     alerts = db.execute(
@@ -95,6 +98,10 @@ async def deliver_pending_notifications(
             event.sent_at = utc_now_naive()
         else:
             event.notification_error = "webhook delivery failed"
+            if event.notification_attempts >= MAX_NOTIFY_ATTEMPTS:
+                # 達重試上限 → 標記 failed，讓壞掉的 webhook 不再每輪
+                # 重撈同一批事件而卡住後續告警的投遞名額
+                event.notification_status = "failed"
     db.commit()
     return result
 

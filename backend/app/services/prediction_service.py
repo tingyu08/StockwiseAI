@@ -9,6 +9,7 @@ import math
 from datetime import date
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError
@@ -71,7 +72,25 @@ def get_predictions(db: Session, stock: Stock) -> dict:
             )
         )
         result[horizon] = band
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # 併發請求已為同一 (stock, trade_date, method) 寫入快取（撞
+        # uq predictions）→ 收斂讀既有結果，不冒泡成 500
+        db.rollback()
+        cached = db.execute(
+            select(Prediction).where(
+                Prediction.stock_id == stock.id,
+                Prediction.trade_date == trade_date,
+                Prediction.method == METHOD,
+            )
+        ).scalars().all()
+        if cached:
+            return _dto(
+                trade_date,
+                {p.horizon_days: json.loads(p.predicted_json) for p in cached},
+            )
+        raise
     return _dto(trade_date, result)
 
 

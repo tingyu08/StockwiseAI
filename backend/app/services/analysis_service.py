@@ -110,12 +110,22 @@ async def build_context(db: Session, stock: Stock) -> AnalysisContext:
     )
 
 
-async def run_batch(db: Session, stocks: Sequence[Stock], kind: str = "routine") -> dict:
-    """批次分析（每批 ≤8 檔）。輸入未變時命中快取。"""
-    trade_dates = {s.id: _last_trade_date(db, s) for s in stocks}
+async def run_batch(
+    db: Session,
+    stocks: Sequence[Stock],
+    kind: str = "routine",
+    trade_dates: dict[int, date] | None = None,
+) -> dict:
+    """批次分析（每批 ≤8 檔）。輸入未變時命中快取。
+
+    trade_dates 可由呼叫端預先算好傳入（overview 流程已批次撈過）以省去
+    重複查詢；未提供時自行以單次 GROUP BY 撈齊，避免逐檔 N+1。
+    """
+    if trade_dates is None:
+        trade_dates = _last_trade_dates(db, stocks)
     pending: list[tuple[Stock, AnalysisContext, str]] = []
     for stock in stocks:
-        trade_date = trade_dates[stock.id]
+        trade_date = trade_dates.get(stock.id)
         if trade_date is None:
             continue
         context = await build_context(db, stock)
@@ -149,7 +159,7 @@ async def run_batch(db: Session, stocks: Sequence[Stock], kind: str = "routine")
             rows.append(
                 dict(
                     stock_id=stock.id,
-                    trade_date=trade_dates[stock.id],
+                    trade_date=trade_dates.get(stock.id),
                     provider="gemini",
                     model=model_used,
                     prompt_version=PROMPT_VERSION,
@@ -231,7 +241,8 @@ async def _run_overview(db: Session, market: str, force: bool = False) -> "AiOve
         raise NotFoundError("尚無價格資料，請先同步")
 
     # 1) 確保每檔都有當日例行報告（已有的會被快取跳過）
-    await run_batch(db, stocks, kind="routine")
+    #    交易日已在上面批次算過，直接傳入省去 run_batch 內重複查詢
+    await run_batch(db, stocks, kind="routine", trade_dates=last_dates)
 
     # 2) 市場環境（真實指數/ADR 數據，AI 只解讀不虛構）
     from app.services.market_context import build_market_context
@@ -239,8 +250,8 @@ async def _run_overview(db: Session, market: str, force: bool = False) -> "AiOve
     market_ctx = await build_market_context(market)
 
     # 3) 各股詳細摘要（昨日表現＋AI 報告全項）
-    # run_batch 剛寫入當日報告，重新撈一次才拿得到
-    reports = _latest_reports(db, stocks, _last_trade_dates(db, stocks))
+    # run_batch 剛寫入當日報告，重新撈報告才拿得到；交易日不因寫報告而變，沿用 last_dates
+    reports = _latest_reports(db, stocks, last_dates)
     lines = []
     for stock in stocks:
         report = reports.get(stock.id)

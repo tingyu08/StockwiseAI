@@ -52,7 +52,9 @@ def run_decisions(db: Session, market: str) -> dict:
             skipped.append({"symbol": stock.symbol, "reason": "無價格資料"})
             continue
         # 價格新鮮度閘門：資料未更新至最新交易日 → 寧可不動作，不用舊價下單
-        if _last_price_date(db, stock.id) < expected_session:
+        # 這裡撈到的最後價格日同時給下面 _today_report 判斷報告是否過期，避免重複查
+        price_date = _last_price_date(db, stock.id)
+        if price_date < expected_session:
             skipped.append(
                 {"symbol": stock.symbol, "reason": "價格尚未更新至最新交易日，跳過決策"}
             )
@@ -70,7 +72,7 @@ def run_decisions(db: Session, market: str) -> dict:
                 created.append({"symbol": stock.symbol, "side": "sell", "reason": "stop-loss"})
                 continue
 
-        report = _today_report(db, stock.id)
+        report = _today_report(db, stock.id, price_date)
         if report is None:
             skipped.append({"symbol": stock.symbol, "reason": "無最新交易日的 AI 報告（請先產生分析）"})
             continue
@@ -165,8 +167,13 @@ def _last_close(db: Session, stock_id: int) -> float | None:
     return float(row) if row is not None else None
 
 
-def _today_report(db: Session, stock_id: int) -> AiReport | None:
-    """最新交易日的報告（trade → deep → routine）。"""
+def _today_report(
+    db: Session, stock_id: int, last_price_date: date | None = None
+) -> AiReport | None:
+    """最新交易日的報告（trade → deep → routine）。
+
+    last_price_date 可由呼叫端傳入（run_decisions 已查過）以省去重複查詢。
+    """
     latest_date = db.execute(
         select(AiReport.trade_date)
         .where(
@@ -176,7 +183,8 @@ def _today_report(db: Session, stock_id: int) -> AiReport | None:
         .order_by(AiReport.trade_date.desc())
         .limit(1)
     ).scalar_one_or_none()
-    if latest_date is None or latest_date < _last_price_date(db, stock_id):
+    price_date = last_price_date if last_price_date is not None else _last_price_date(db, stock_id)
+    if latest_date is None or latest_date < price_date:
         return None  # 報告過期（未涵蓋最新交易日）不據以決策
     for kind in ("trade", "deep", "routine"):
         report = db.execute(

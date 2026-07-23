@@ -66,3 +66,33 @@ def test_add_watch_survives_sync_enqueue_failure(client, monkeypatch):
     assert response.json()["data"]["run_id"] is None
     with SessionLocal() as db:
         assert db.scalar(select(WatchlistItem).where(WatchlistItem.stock_id == stock.id))
+
+
+def test_add_watch_duplicate_keeps_single_row(client, monkeypatch):
+    """同一檔重複加入只保留一筆 WatchlistItem，且回傳冪等成功而非冒泡錯誤。
+
+    單執行緒下 existing 檢查會先攔截重複；真正的並發競態（existing 檢查
+    通過、commit 時撞 uq_watchlist_stock）由 route 內的 IntegrityError 兜底
+    收斂——這裡固定「不重複建立」的行為契約。
+    """
+    from sqlalchemy import func
+
+    stock = _stock("QADD3")
+
+    async def fake_ensure(_db, _market, _symbol):
+        return stock
+
+    monkeypatch.setattr(watchlist, "ensure_stock", fake_ensure)
+
+    first = client.post("/api/v1/watchlist", json={"market": "TW", "symbol": "QADD3"})
+    second = client.post("/api/v1/watchlist", json={"market": "TW", "symbol": "QADD3"})
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    with SessionLocal() as db:
+        count = db.execute(
+            select(func.count())
+            .select_from(WatchlistItem)
+            .where(WatchlistItem.stock_id == stock.id)
+        ).scalar_one()
+        assert count == 1

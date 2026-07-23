@@ -4,6 +4,7 @@ from typing import Literal
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.db import get_db
@@ -154,7 +155,12 @@ async def add_watch(body: AddWatchBody, db: Session = Depends(get_db)) -> Envelo
             .limit(1)
         ).scalar_one_or_none()
         db.add(WatchlistItem(stock_id=stock.id, sort_order=(max_order or 0) + 1))
-        db.commit()
+        try:
+            db.commit()
+        except IntegrityError:
+            # 併發重複加入同一檔會撞 uq_watchlist_stock：已有他人先建好，
+            # 收斂為冪等成功而非冒泡成 500
+            db.rollback()
     job_name = f"sync-{stock.market.lower()}-{stock.symbol.lower()}"
     try:
         run_id = enqueue_job(
