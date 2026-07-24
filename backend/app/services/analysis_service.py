@@ -252,10 +252,11 @@ async def _run_overview(db: Session, market: str, force: bool = False) -> "AiOve
     # 3) 各股詳細摘要（昨日表現＋AI 報告全項）
     # run_batch 剛寫入當日報告，重新撈報告才拿得到；交易日不因寫報告而變，沿用 last_dates
     reports = _latest_reports(db, stocks, last_dates)
+    changes = _yesterday_changes(db, stocks)
     lines = []
     for stock in stocks:
         report = reports.get(stock.id)
-        chg = _yesterday_change(db, stock)
+        chg = changes[stock.id]
         if report is None:
             lines.append(f"- {stock.symbol} {stock.name}：{chg}｜（尚無 AI 報告）")
             continue
@@ -327,10 +328,44 @@ def _yesterday_change(db: Session, stock: Stock) -> str:
         .limit(2)
     ).scalars().all()
     closes = [float(r.close) for r in rows if r.close is not None]
+    return _format_change(closes)
+
+
+def _format_change(closes: list[float]) -> str:
+    """closes 依日期新→舊；不足兩筆即無從計算漲跌。"""
     if len(closes) < 2:
         return "昨日資料不足"
-    last, prev = closes
+    last, prev = closes[0], closes[1]
     return f"收盤 {last}（{(last - prev) / prev * 100:+.2f}%）"
+
+
+def _yesterday_changes(db: Session, stocks: Sequence[Stock]) -> dict[int, str]:
+    """一次撈齊多檔的昨日漲跌（取代逐檔查詢）。
+
+    每檔只要最後兩筆收盤，但沒有可攜的 per-group LIMIT；改為一次撈回
+    近 14 天的收盤再於 Python 分組——資料量小，且把 N 次往返壓成 1 次。
+    """
+    ids = [s.id for s in stocks]
+    if not ids:
+        return {}
+    since = max(
+        (market_today(s.market) for s in stocks), default=date.today()
+    ) - timedelta(days=14)
+    rows = db.execute(
+        select(DailyPrice.stock_id, DailyPrice.date, DailyPrice.close)
+        .where(
+            DailyPrice.stock_id.in_(ids),
+            DailyPrice.close.is_not(None),
+            DailyPrice.date >= since,
+        )
+        .order_by(DailyPrice.stock_id, DailyPrice.date.desc())
+    ).all()
+    by_stock: dict[int, list[float]] = {}
+    for stock_id, _d, close in rows:
+        bucket = by_stock.setdefault(stock_id, [])
+        if len(bucket) < 2:  # 已按日期新→舊排序，取前兩筆即可
+            bucket.append(float(close))
+    return {stock.id: _format_change(by_stock.get(stock.id, [])) for stock in stocks}
 
 
 def overview_dto(overview) -> dict:

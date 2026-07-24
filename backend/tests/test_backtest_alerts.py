@@ -268,3 +268,43 @@ def test_open_position_uses_same_yardstick_as_equity_curve():
     assert result["open_position"]["pnl_pct"] == pytest.approx(
         (final_equity - 1) * 100, abs=0.01
     )
+
+
+def test_etf_pays_one_third_of_stock_transaction_tax():
+    """台股 ETF 證交稅 0.1%，個股 0.3%——不分辨會讓 ETF 賣出成本高估近三倍。"""
+    from app.services.backtest_service import _fee_rate
+    from app.services.sim.engine import calc_fee
+
+    # 回測：賣出費率
+    stock_sell = _fee_rate("TW", "sell", is_etf=False)
+    etf_sell = _fee_rate("TW", "sell", is_etf=True)
+    assert stock_sell - etf_sell == pytest.approx(0.002, abs=1e-6)  # 0.3% - 0.1%
+    assert _fee_rate("TW", "buy", is_etf=True) == _fee_rate("TW", "buy", is_etf=False)
+
+    # 模擬引擎：同一筆金額，ETF 的稅少 0.2%
+    gross = 1_000_000.0
+    assert calc_fee("TW", "sell", gross, is_etf=False) - calc_fee(
+        "TW", "sell", gross, is_etf=True
+    ) == pytest.approx(gross * 0.002, abs=0.01)
+
+
+def test_beats_buy_hold_compares_like_with_like():
+    """基準也要含費，否則「淨 vs 毛」相減會系統性低估超額報酬。"""
+    from app.services.backtest_service import _net_pnl_pct
+
+    df = pd.DataFrame({
+        "date": [date(2026, 7, 1), date(2026, 7, 2), date(2026, 7, 3)],
+        "open": [100.0, 100.0, 110.0],
+        "close": [100.0, 105.0, 110.0],
+    })
+
+    result = _simulate("TW", df, [1, 1, 1], "ma_cross")
+    reported = result["metrics"]["buy_hold_return_pct"]
+
+    gross = (110.0 / 100.0 - 1) * 100  # 10.0%
+    expected_net = _net_pnl_pct("TW", 100.0, 110.0)
+
+    assert reported == pytest.approx(expected_net, abs=0.01), (
+        f"buy_hold 應為含費淨值 {expected_net}%，實得 {reported}%"
+    )
+    assert reported < gross, "買入持有基準仍是毛報酬，與含費的策略報酬不同尺"

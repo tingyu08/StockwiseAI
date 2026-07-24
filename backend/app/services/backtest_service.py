@@ -2,8 +2,13 @@
 
 規則：
 - 訊號於收盤產生，次一交易日「開盤價」進出場（與模擬引擎一致，避免前視偏誤）
-- 全倉進出，費用同模擬引擎（台股手續費＋證交稅、美股 0）
+- 全倉進出，費率沿用模擬引擎的常數（台股手續費＋證交稅、美股 0），
+  ETF 的證交稅為 0.1%（個股 0.3%）
 - 指標：總報酬、年化、最大回撤、勝率、交易數、對比買入持有
+
+已知簡化：權益以 1.0 正規化，沒有真實幣別金額，因此模擬引擎的
+「手續費最低 20 元」無法在此表達（那需要先假定一筆起始本金）。
+小額交易的實際成本會略高於本回測。
 """
 from dataclasses import dataclass
 from datetime import timedelta
@@ -16,6 +21,7 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import NotFoundError
 from app.models import DailyPrice, Stock
 from app.services.indicator_service import compute_indicators
+from app.services.sim.engine import TW_FEE_RATE, tw_tax_rate
 from app.services.time_service import market_today
 
 TRADING_DAYS = 252
@@ -84,7 +90,10 @@ def run_backtest(
     if len(df) < 2:
         raise NotFoundError(f"{symbol} 於指定區間資料不足（{len(df)} 筆）")
 
-    return _simulate(market, df, signals, strategy, slippage_bps=slippage_bps)
+    return _simulate(
+        market, df, signals, strategy,
+        slippage_bps=slippage_bps, is_etf=stock.kind == "etf",
+    )
 
 
 def _signals(strategy: str, df: pd.DataFrame, ind: pd.DataFrame) -> list[int]:
@@ -117,7 +126,7 @@ def _signals(strategy: str, df: pd.DataFrame, ind: pd.DataFrame) -> list[int]:
 
 def _simulate(
     market: str, df: pd.DataFrame, signals: list[int], strategy: str,
-    slippage_bps: int = 0,
+    slippage_bps: int = 0, is_etf: bool = False,
 ) -> dict:
     cash = 1.0  # 正規化資金
     qty = 0.0
@@ -133,16 +142,16 @@ def _simulate(
             open_price = df["open"].iloc[i]
             if target == 1 and qty == 0:
                 execution_price = open_price * (1 + slippage_bps / 10_000)
-                qty = cash * (1 - _fee_rate(market, "buy")) / execution_price
+                qty = cash * (1 - _fee_rate(market, "buy", is_etf)) / execution_price
                 cash = 0.0
                 entry = (df["date"].iloc[i].isoformat(), execution_price)
             elif target == 0 and qty > 0:
                 execution_price = open_price * (1 - slippage_bps / 10_000)
                 gross = qty * execution_price
-                cash = gross * (1 - _fee_rate(market, "sell"))
+                cash = gross * (1 - _fee_rate(market, "sell", is_etf))
                 trades.append(Trade(
                     entry[0], entry[1], df["date"].iloc[i].isoformat(), execution_price,
-                    _net_pnl_pct(market, entry[1], execution_price) if entry else None,
+                    _net_pnl_pct(market, entry[1], execution_price, is_etf),
                 ))
                 qty = 0.0
                 entry = None
@@ -157,7 +166,7 @@ def _simulate(
         # 買進成本）。若在此扣賣出費，就會變成第三種定義：既不等於
         # equity 也不等於已平倉交易的淨值，反而更難解讀。
         last_close = df["close"].iloc[-1]
-        buy_fee = _fee_rate(market, "buy")
+        buy_fee = _fee_rate(market, "buy", is_etf)
         open_position = Trade(
             entry[0], entry[1], None, None,
             round(((1 - buy_fee) * last_close / entry[1] - 1) * 100, 2),
@@ -166,7 +175,11 @@ def _simulate(
     equities = [p["equity"] for p in equity_curve]
     total_return = (equities[-1] - 1) * 100
     years = max(len(df) / TRADING_DAYS, 1 / TRADING_DAYS)
-    buy_hold = (df["close"].iloc[-1] / df["open"].iloc[0] - 1) * 100
+    # 買入持有也要含費，否則 beats_buy_hold 是「淨 vs 毛」相減：
+    # 策略被多扣了成本，基準卻沒有，超額報酬會被系統性低估
+    buy_hold = _net_pnl_pct(
+        market, df["open"].iloc[0], df["close"].iloc[-1], is_etf
+    )
     closed = [t for t in trades if t.exit_date is not None]
     wins = [t for t in closed if t.pnl_pct > 0]
 
@@ -188,8 +201,8 @@ def _simulate(
         "assumptions": {
             "slippage_bps": slippage_bps,
             # 損益/勝率都是含費淨值，UI 需揭露否則使用者拿進出場價自算會對不上
-            "buy_fee_pct": round(_fee_rate(market, "buy") * 100, 4),
-            "sell_fee_pct": round(_fee_rate(market, "sell") * 100, 4),
+            "buy_fee_pct": round(_fee_rate(market, "buy", is_etf) * 100, 4),
+            "sell_fee_pct": round(_fee_rate(market, "sell", is_etf) * 100, 4),
         },
         "equity_curve": equity_curve,
         "trades": [t.__dict__ for t in closed[-50:]],
@@ -198,24 +211,28 @@ def _simulate(
     }
 
 
-def _net_pnl_pct(market: str, entry_price: float, exit_price: float) -> float:
+def _net_pnl_pct(
+    market: str, entry_price: float, exit_price: float, is_etf: bool = False
+) -> float:
     """單筆含手續費的淨報酬率（%）。
 
     毛報酬會讓 win_rate 與 equity 曲線不一致：台股單筆來回約 0.585%
     （買 0.1425% ＋ 賣 0.4425%）以內的正毛報酬其實是淨虧損，卻會被
     算成一筆勝場。equity 曲線本來就是含費淨值，兩者必須同一把尺。
     """
-    buy_fee = _fee_rate(market, "buy")
-    sell_fee = _fee_rate(market, "sell")
+    buy_fee = _fee_rate(market, "buy", is_etf)
+    sell_fee = _fee_rate(market, "sell", is_etf)
     net_multiple = (1 - buy_fee) * (1 - sell_fee) * exit_price / entry_price
     return round((net_multiple - 1) * 100, 2)
 
 
-def _fee_rate(market: str, side: str) -> float:
+def _fee_rate(market: str, side: str, is_etf: bool = False) -> float:
+    """費率沿用 sim/engine 的常數，避免兩套引擎各自漂移。"""
     if market == "US":
         return 0.0
-    rate = 0.001425
-    return rate + 0.003 if side == "sell" else rate
+    if side == "sell":
+        return TW_FEE_RATE + tw_tax_rate(is_etf)
+    return TW_FEE_RATE
 
 
 def _max_drawdown(equities: list[float]) -> float:

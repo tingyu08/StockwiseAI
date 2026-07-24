@@ -3,7 +3,7 @@
 規則（docs/SD.md §3）：
 - 委託單於 AI 決策時建立為 pending，以「決策後第一個開盤」的開盤價成交：
   開盤前（晨間決策流程）建立的單吃當地「當天」開盤；開盤後建立的單吃下一個交易日
-- 台股費用：手續費 0.1425%（最低 20 元），賣出另課證交稅 0.3%
+- 台股費用：手續費 0.1425%（最低 20 元），賣出另課證交稅——個股 0.3%、ETF 0.1%
 - 美股費用：0（主流券商零手續費）
 - 事件溯源：orders 一經 filled/rejected 不再變更；持倉由重放推導
 """
@@ -26,7 +26,8 @@ MARKET_OPEN = {"TW": (9, 0), "US": (9, 30)}  # 當地開盤時間
 
 TW_FEE_RATE = 0.001425
 TW_FEE_MIN = 20.0
-TW_TAX_RATE = 0.003  # 賣出證交稅
+TW_TAX_RATE = 0.003  # 賣出證交稅（個股）
+TW_ETF_TAX_RATE = 0.001  # 賣出證交稅（受益憑證/ETF）——為個股的 1/3
 
 
 def get_or_create_account(db: Session, market: str) -> SimAccount:
@@ -46,13 +47,22 @@ def get_or_create_account(db: Session, market: str) -> SimAccount:
     return account
 
 
-def calc_fee(market: str, side: str, gross: float) -> float:
-    """交易成本（手續費＋稅）。"""
+def tw_tax_rate(is_etf: bool) -> float:
+    """台股賣出證交稅：ETF（受益憑證）0.1%，個股 0.3%。"""
+    return TW_ETF_TAX_RATE if is_etf else TW_TAX_RATE
+
+
+def calc_fee(market: str, side: str, gross: float, is_etf: bool = False) -> float:
+    """交易成本（手續費＋稅）。
+
+    ETF 的證交稅只有個股的 1/3，不分辨會讓 ETF 的賣出成本高估近三倍
+    （0.3% vs 0.1%），對 ETF 佔比高的組合影響顯著。
+    """
     if market == "US":
         return 0.0
     fee = max(TW_FEE_MIN, gross * TW_FEE_RATE)
     if side == "sell":
-        fee += gross * TW_TAX_RATE
+        fee += gross * tw_tax_rate(is_etf)
     return round(fee, 2)
 
 
@@ -123,7 +133,7 @@ def fill_pending_orders(db: Session, market: str) -> dict:
                 rejected += 1
                 continue
             gross = qty * open_price
-            fee = calc_fee(market, "buy", gross)
+            fee = calc_fee(market, "buy", gross, is_etf=stock.kind == "etf")
             account.cash = float(account.cash) - gross - fee
         else:
             held_qty = positions.get(stock.id, 0.0)
@@ -132,7 +142,7 @@ def fill_pending_orders(db: Session, market: str) -> dict:
                 rejected += 1
                 continue
             gross = qty * open_price
-            fee = calc_fee(market, "sell", gross)
+            fee = calc_fee(market, "sell", gross, is_etf=stock.kind == "etf")
             account.cash = float(account.cash) + gross - fee
 
         order.qty = qty

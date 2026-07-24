@@ -41,7 +41,9 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.lock
       - run: pip install --require-hashes -r requirements.lock
-      - run: pip install pytest pytest-asyncio pytest-cov ruff pip-audit
+      # ruff 鎖版本：未鎖的話 lint 工具一發新版就可能讓 CI 在沒有任何
+      # 程式碼變更的情況下變紅（0.16.0 擴大預設規則集時就發生過）
+      - run: pip install pytest pytest-asyncio pytest-cov ruff==0.16.0 pip-audit
       - run: pytest -q
       - run: ruff check app tests alembic
       - name: PostgreSQL migration smoke

@@ -68,7 +68,10 @@ async def run_exit_sentinel(db: Session, market: str) -> dict:
         if fill_kind is None:
             continue
 
-        if not _fill_exit(db, account, stock_id, qty, quote, report_id, fill_kind):
+        if not _fill_exit(
+            db, account, stock_id, qty, quote, report_id, fill_kind,
+            is_etf=stock.kind == "etf",
+        ):
             continue  # 已有 pending（每日決策單或並發哨兵），讓既有流程處理
         exits.append(
             {
@@ -101,6 +104,7 @@ def _fill_exit(
     price: float,
     report_id: int | None,
     fill_kind: str,
+    is_etf: bool = False,
 ) -> bool:
     """建 pending（吃 partial unique index 防重複）後立即以觀察價成交。"""
     order = SimOrder(
@@ -121,7 +125,7 @@ def _fill_exit(
         return False
 
     gross = qty * price
-    fee = calc_fee(account.market, "sell", gross)
+    fee = calc_fee(account.market, "sell", gross, is_etf=is_etf)
     account.cash = float(account.cash) + gross - fee
     order.fill_price = price
     order.fee = fee

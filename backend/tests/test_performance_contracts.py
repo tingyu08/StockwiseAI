@@ -1,5 +1,5 @@
 import inspect
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete, event
@@ -242,6 +242,52 @@ def test_overview_helpers_batch_instead_of_per_stock_queries():
     finally:
         for stock in stocks:
             db.execute(delete(AiReport).where(AiReport.stock_id == stock.id))
+            db.execute(delete(DailyPrice).where(DailyPrice.stock_id == stock.id))
+            db.delete(stock)
+        db.commit()
+        db.close()
+
+
+def test_yesterday_changes_batches_instead_of_per_stock():
+    """昨日漲跌是 overview 迴圈裡最後一處逐檔查詢，必須壓成單次。"""
+    from app.services.analysis_service import _yesterday_change, _yesterday_changes
+
+    db = SessionLocal()
+    stocks = []
+    try:
+        for i in range(5):
+            stock = Stock(
+                symbol=f"YCH{i}", market="TW", name=f"漲跌 {i}",
+                currency="TWD", kind="stock",
+            )
+            db.add(stock)
+            db.flush()
+            for offset, close in ((2, 100.0 + i), (1, 110.0 + i)):
+                db.add(DailyPrice(
+                    stock_id=stock.id, date=date.today() - timedelta(days=offset),
+                    open=100, high=111, low=99, close=close, volume=1000,
+                ))
+            stocks.append(stock)
+        db.commit()
+
+        counts = {"n": 0}
+
+        def count(conn, cursor, statement, params, context, executemany):
+            counts["n"] += 1
+
+        event.listen(engine, "before_cursor_execute", count)
+        try:
+            changes = _yesterday_changes(db, stocks)
+        finally:
+            event.remove(engine, "before_cursor_execute", count)
+
+        assert counts["n"] == 1, f"用了 {counts['n']} 次查詢（應為批次單次）"
+        # 與逐檔版等價
+        for stock in stocks:
+            assert changes[stock.id] == _yesterday_change(db, stock)
+        assert "%" in changes[stocks[0].id]
+    finally:
+        for stock in stocks:
             db.execute(delete(DailyPrice).where(DailyPrice.stock_id == stock.id))
             db.delete(stock)
         db.commit()

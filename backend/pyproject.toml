@@ -25,7 +25,7 @@ dev = [
     "pytest>=8.3",
     "pytest-asyncio>=0.24",
     "pytest-cov>=7.0",
-    "ruff>=0.7",
+    "ruff==0.16.0",  # 與 CI 同版本，避免本機綠、CI 紅
 ]
 
 [build-system]
@@ -42,3 +42,12 @@ addopts = "--cov=app --cov-report=term-missing --cov-fail-under=75"
 
 [tool.ruff]
 line-length = 100
+
+# 明確宣告規則集，不吃 ruff 的預設值。
+# 背景：CI 原本以未鎖版本的 ruff 執行，pyproject 也沒有 select，等於把
+# 「什麼算 lint 錯誤」交給當下最新的 ruff 決定。ruff 0.16.0 擴大預設規則集
+# 後，CI 在沒有任何程式碼變更的情況下一次冒出 159 個錯誤（多半落在數月未
+# 動過的 migration 與 API 檔）。規則集寫死在這裡，升級 ruff 就不會再默默
+# 改變「通過與否」的定義。
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
