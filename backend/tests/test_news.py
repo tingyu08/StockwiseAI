@@ -191,6 +191,10 @@ async def test_news_job_stops_on_quota(monkeypatch):
     from app.models import WatchlistItem
     from app.scheduler.jobs import news_research_daily
 
+    # 交易日閘門與本測試無關；不擋掉的話週末/假日會提前 return
+    # {"skipped": ...}，測試每逢週末必失敗（CI 也是）
+    monkeypatch.setattr("app.scheduler.jobs._non_trading_gate", lambda market: None)
+
     calls = []
 
     async def fake_research(self, symbol, name, market):
@@ -229,6 +233,10 @@ async def test_antigravity_429_stops_the_batch(monkeypatch):
     from app.models import WatchlistItem
     from app.providers.ai import antigravity
     from app.scheduler.jobs import news_research_daily
+
+    # 交易日閘門與本測試無關；不擋掉的話週末/假日會提前 return
+    # {"skipped": ...}，測試每逢週末必失敗（CI 也是）
+    monkeypatch.setattr("app.scheduler.jobs._non_trading_gate", lambda market: None)
 
     calls = {"n": 0}
 

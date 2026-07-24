@@ -21,6 +21,10 @@ async def test_scheduled_overview_uses_the_requested_market_and_closes_session(m
         seen.update(session=session, market=market)
         return {"market": market}
 
+    # 這裡驗的是「market 有正確傳遞、session 有關閉」，與行事曆無關。
+    # 不擋掉交易日閘門的話，本測試每逢週末/假日就會失敗（job 提前 return
+    # {"skipped": ...}），CI 週末必紅。
+    monkeypatch.setattr("app.scheduler.jobs._non_trading_gate", lambda market: None)
     monkeypatch.setattr("app.scheduler.jobs.SessionLocal", lambda: db)
     monkeypatch.setattr(analysis_service, "run_overview", run_overview)
     monkeypatch.setattr(analysis_service, "overview_dto", lambda overview: overview)
