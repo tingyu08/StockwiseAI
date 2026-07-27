@@ -68,7 +68,18 @@ jobs:
       - run: npm run test:coverage
       - run: npm run lint
       - run: npm run build
-      - run: npm audit --audit-level=high
+      # 阻擋門檻只看正式環境相依：dev 工具鏈（eslint 全家）的漏洞不會被
+      # 打包進 next build 的產出，碰不到部署出去的東西。而它們目前無法
+      # 單獨修補——brace-expansion 的修補版只在 5.x，強制 override 會讓
+      # minimatch@3 的 require('brace-expansion') 拿到物件而非函式（實測
+      # 會丟 TypeError）；要往前升 eslint 10 則被 eslint-config-next 15
+      # 的 peer（^7||^8||^9）擋住，而它必須跟著 next 版本走。
+      - run: npm audit --omit=dev --audit-level=high
+      # dev 相依仍然掃，只是不擋 CI：供應鏈攻擊會在 CI 與開發機上執行，
+      # 不能因為上游一時無解就完全失去能見度。紅字要看，別當背景雜訊。
+      - name: npm audit (dev dependencies, warning only)
+        continue-on-error: true
+        run: npm audit --audit-level=high
 
   containers:
     runs-on: ubuntu-latest
