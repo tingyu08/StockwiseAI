@@ -1,6 +1,9 @@
+import ast
 import inspect
+import pathlib
 from datetime import date, datetime, timedelta
 
+import pandas as pd
 import pytest
 from sqlalchemy import delete, event
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +30,75 @@ def test_database_only_endpoints_run_in_fastapi_threadpool():
         simulation.trigger_fill,
     )
     assert all(not inspect.iscoroutinefunction(endpoint) for endpoint in endpoints)
+
+
+def test_no_endpoint_is_async_without_awaiting():
+    """掃描 api/v1：宣告 async 卻整段沒有 await 的 endpoint 一律視為錯誤。
+
+    FastAPI 對 `def` 會自動丟到 threadpool，對 `async def` 則直接在 event
+    loop 上執行。純同步的 DB/CPU 工作宣告成 async，等於讓全站共用的 event
+    loop 被它阻塞。上面那條是列舉式的，容易漏掉新增的 endpoint；這條改為
+    整個目錄掃描，日後新增或被改回 async 都會當場失敗。
+    """
+    api_dir = pathlib.Path(alerts.__file__).parent
+    offenders = []
+    for path in sorted(api_dir.glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.AsyncFunctionDef):
+                continue
+            awaits = any(
+                isinstance(inner, (ast.Await, ast.AsyncFor, ast.AsyncWith))
+                for inner in ast.walk(node)
+            )
+            if not awaits:
+                offenders.append(f"{path.name}:{node.name}")
+    assert not offenders, (
+        f"這些 endpoint 宣告 async 卻沒有任何 await，應改成 def：{offenders}"
+    )
+
+
+def _fake_daily_frame(days: int = 130) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "Date": pd.date_range("2026-01-01", periods=days, freq="D"),
+            "Open": 100.0, "High": 101.0, "Low": 99.0, "Close": 100.0, "Volume": 1000,
+        }
+    )
+
+
+async def test_market_context_fetches_each_ticker_once_and_in_parallel(monkeypatch):
+    """簡報的外部請求要平行送出，且同一代號只抓一次。
+
+    ^GSPC 在美股同時是全球指數與本地大盤，去重失效就會多打一次；
+    平行化失效則整段從「最慢的一筆」退回「全部相加」（實測約 23s vs 3s）。
+    """
+    import threading
+    import time
+
+    from app.services import market_context as mc
+
+    calls: list[str] = []
+    peak = {"current": 0, "max": 0}
+    lock = threading.Lock()
+
+    def fake_load(ticker: str):
+        with lock:
+            calls.append(ticker)
+            peak["current"] += 1
+            peak["max"] = max(peak["max"], peak["current"])
+        time.sleep(0.05)  # 夠久才分得出串行與平行
+        with lock:
+            peak["current"] -= 1
+        return _fake_daily_frame()
+
+    monkeypatch.setattr(mc, "_load_daily", fake_load)
+
+    await mc.build_market_context("US")
+
+    assert calls.count("^GSPC") == 1, f"^GSPC 被重複抓取：{calls}"
+    assert sorted(calls) == sorted(set(calls)), f"有代號被重複抓取：{calls}"
+    assert peak["max"] > 1, "外部請求仍是串行送出（沒有任何兩筆重疊）"
 
 
 def test_premium_list_uses_one_query_for_all_etfs(client):

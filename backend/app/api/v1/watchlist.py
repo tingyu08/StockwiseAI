@@ -56,7 +56,7 @@ class GroupBody(BaseModel):
 # ---- 群組 ----
 
 @router.get("/groups", response_model=Envelope)
-async def list_groups(
+def list_groups(
     market: Literal["TW", "US"] = Query(...), db: Session = Depends(get_db)
 ) -> Envelope:
     groups = db.execute(
@@ -66,7 +66,7 @@ async def list_groups(
 
 
 @router.post("/groups", response_model=Envelope)
-async def create_group(body: GroupBody, db: Session = Depends(get_db)) -> Envelope:
+def create_group(body: GroupBody, db: Session = Depends(get_db)) -> Envelope:
     exists = db.execute(
         select(WatchGroup).where(WatchGroup.market == body.market, WatchGroup.name == body.name)
     ).scalar_one_or_none()
@@ -83,7 +83,7 @@ class RenameGroupBody(BaseModel):
 
 
 @router.patch("/groups/{group_id}", response_model=Envelope)
-async def rename_group(
+def rename_group(
     group_id: int, body: RenameGroupBody, db: Session = Depends(get_db)
 ) -> Envelope:
     group = db.get(WatchGroup, group_id)
@@ -104,7 +104,7 @@ async def rename_group(
 
 
 @router.delete("/groups/{group_id}", response_model=Envelope)
-async def delete_group(group_id: int, db: Session = Depends(get_db)) -> Envelope:
+def delete_group(group_id: int, db: Session = Depends(get_db)) -> Envelope:
     group = db.get(WatchGroup, group_id)
     if group is None:
         raise NotFoundError("查無此群組")
@@ -121,7 +121,7 @@ async def delete_group(group_id: int, db: Session = Depends(get_db)) -> Envelope
 # ---- 自選清單 ----
 
 @router.get("/watchlist", response_model=Envelope)
-async def list_watchlist(
+def list_watchlist(
     market: Literal["TW", "US"] = Query(...), db: Session = Depends(get_db)
 ) -> Envelope:
     rows = db.execute(
@@ -184,7 +184,7 @@ async def add_watch(body: AddWatchBody, db: Session = Depends(get_db)) -> Envelo
 
 
 @router.patch("/watchlist/{symbol}", response_model=Envelope)
-async def patch_watch(
+def patch_watch(
     symbol: str,
     body: PatchWatchBody,
     market: Literal["TW", "US"] = Query(...),
@@ -204,7 +204,7 @@ async def patch_watch(
 
 
 @router.put("/watchlist/reorder", response_model=Envelope)
-async def reorder_watchlist(body: ReorderBody, db: Session = Depends(get_db)) -> Envelope:
+def reorder_watchlist(body: ReorderBody, db: Session = Depends(get_db)) -> Envelope:
     """整批更新排序與群組歸屬（前端上/下移或搬移群組後送出全清單）。"""
     resolved = []
     for entry in body.items:
@@ -220,7 +220,7 @@ async def reorder_watchlist(body: ReorderBody, db: Session = Depends(get_db)) ->
 
 
 @router.delete("/watchlist/{symbol}", response_model=Envelope)
-async def remove_watch(
+def remove_watch(
     symbol: str, market: Literal["TW", "US"] = Query(...), db: Session = Depends(get_db)
 ) -> Envelope:
     item = _get_item(db, market, symbol)

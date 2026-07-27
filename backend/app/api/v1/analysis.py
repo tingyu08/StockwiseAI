@@ -24,7 +24,7 @@ def _get_stock(db: Session, market: str, symbol: str) -> Stock:
 
 
 @router.get("/analysis/overview", response_model=Envelope)
-async def get_overview(
+def get_overview(
     market: Literal["TW", "US"] = Query(...), db: Session = Depends(get_db)
 ) -> Envelope:
     """今日投資組合總評（無則 404，前端顯示產生按鈕）。"""
@@ -44,7 +44,7 @@ async def get_overview(
 
 
 @router.post("/analysis/overview:run", response_model=Envelope)
-async def run_overview(
+def run_overview(
     market: Literal["TW", "US"] = Query(...),
     force: bool = Query(False),
     db: Session = Depends(get_db),
@@ -63,7 +63,7 @@ async def run_overview(
 
 
 @router.get("/stocks/{symbol}/analysis", response_model=Envelope)
-async def get_analysis(
+def get_analysis(
     symbol: str,
     market: Literal["TW", "US"] = Query(...),
     db: Session = Depends(get_db),
@@ -91,7 +91,7 @@ async def run_routine(
 
 
 @router.get("/stocks/{symbol}/news", response_model=Envelope)
-async def get_news(
+def get_news(
     symbol: str,
     market: Literal["TW", "US"] = Query(...),
     db: Session = Depends(get_db),
@@ -107,7 +107,7 @@ async def get_news(
 
 
 @router.post("/stocks/{symbol}/news:run", response_model=Envelope)
-async def run_news(
+def run_news(
     symbol: str,
     market: Literal["TW", "US"] = Query(...),
     force: bool = Query(False),

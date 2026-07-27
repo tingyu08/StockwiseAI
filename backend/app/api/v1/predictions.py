@@ -14,7 +14,7 @@ router = APIRouter(tags=["predictions"])
 
 
 @router.get("/stocks/{symbol}/predictions", response_model=Envelope)
-async def predictions(
+def predictions(
     symbol: str,
     market: Literal["TW", "US"] = Query(...),
     db: Session = Depends(get_db),

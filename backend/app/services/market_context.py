@@ -5,6 +5,7 @@ AI 只負責解讀，不虛構行情。
 """
 import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -34,6 +35,18 @@ class IndexQuote:
     change_pct: float
 
 
+def _load_daily(ticker: str) -> pd.DataFrame | None:
+    """FinMind 日線；失敗回 None 交由 _history 決定是否退 yfinance。
+
+    獨立成函式是為了讓 build_market_context 能平行預抓（見該處說明）。
+    """
+    try:
+        return finmind_us.fetch_daily(ticker)
+    except Exception as exc:
+        logger.warning("FinMind %s failed: %s（改試 yfinance）", ticker, exc)
+        return None
+
+
 def _history(
     ticker: str, period_days: int, raw_cache: dict[str, pd.DataFrame | None] | None = None
 ) -> pd.DataFrame | None:
@@ -50,11 +63,7 @@ def _history(
     if raw_cache is not None and ticker in raw_cache:
         df = raw_cache[ticker]
     else:
-        try:
-            df = finmind_us.fetch_daily(ticker)
-        except Exception as exc:
-            logger.warning("FinMind %s failed: %s（改試 yfinance）", ticker, exc)
-            df = None
+        df = _load_daily(ticker)
         if raw_cache is not None:
             raw_cache[ticker] = df
     if df is not None and not df.empty:
@@ -229,10 +238,30 @@ def _fetch_tw_futures_positions() -> list[dict] | None:
 async def build_market_context(market: str) -> str:
     """組裝市場環境文字摘要（抓不到的項目誠實標示，不讓 AI 腦補）。"""
 
+    # 同一次組裝內每個代號只抓一次：美股的 ^GSPC 同時列在全球指數與
+    # 本地大盤，去重後只留一份
+    tickers = list(dict.fromkeys([*GLOBAL_TICKERS, ADR_TICKER[0], LOCAL_INDEX[market][0]]))
+
     def _gather() -> str:
-        # 同一次組裝內每個代號只抓一次：美股的 ^GSPC 同時列在全球指數與
-        # 本地大盤，沒有這層快取就會對它連抓兩趟相同的日線
+        # 這些外部請求彼此完全獨立，原本一路串行（日線 5~6 筆，台股再加
+        # 期交所 3 筆），每筆數百毫秒到數秒。改為一次送出各自回來，
+        # 整段耗時從「全部相加」降為「最慢的那一筆」。
         raw_cache: dict[str, pd.DataFrame | None] = {}
+        with ThreadPoolExecutor(
+            max_workers=min(8, len(tickers) + 2), thread_name_prefix="mktctx"
+        ) as pool:
+            daily_tasks = {t: pool.submit(_load_daily, t) for t in tickers}
+            night_task = pool.submit(_fetch_tw_night_futures) if market == "TW" else None
+            positions_task = (
+                pool.submit(_fetch_tw_futures_positions) if market == "TW" else None
+            )
+            # 預抓結果填進 raw_cache：下方沿用原本的同步組裝流程，
+            # 只是每次 _history 都會直接命中快取而不再發出請求
+            for ticker, task in daily_tasks.items():
+                raw_cache[ticker] = task.result()
+            night = night_task.result() if night_task else None
+            positions = positions_task.result() if positions_task else None
+
         lines: list[str] = ["【全球指數（最近收盤 vs 前日）】"]
         for ticker, name in GLOBAL_TICKERS.items():
             q = _fetch_quote(ticker, name, raw_cache)
@@ -258,7 +287,6 @@ async def build_market_context(market: str) -> str:
 
         if market == "TW":
             lines.append("\n【台指期夜盤（隔夜對台股的直接定價）】")
-            night = _fetch_tw_night_futures()
             if night:
                 lines.append(
                     f"- 近月 {night['contract']} 夜盤最新 {night['night_last']:,.0f}"
@@ -268,7 +296,6 @@ async def build_market_context(market: str) -> str:
                 lines.append("- 資料暫缺")
 
             lines.append("\n【台指期三大法人淨未平倉（法人押注方向）】")
-            positions = _fetch_tw_futures_positions()
             if positions:
                 for p in positions:
                     side = "淨多" if p["net"] >= 0 else "淨空"

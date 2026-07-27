@@ -153,3 +153,45 @@ def test_configured_logging_redacts_secrets_from_exception_tracebacks():
     assert secret not in output
     assert "[REDACTED]" in output
     assert "RuntimeError" in output
+
+
+# ---- 登入限流表的容量 ----
+
+def test_login_attempt_table_does_not_accumulate_dead_entries():
+    """限流表的容量要收斂於「視窗內活躍來源數」，而非歷史累計來源數。
+
+    這張表以來源 IP 為鍵，長駐後端且任何人都能觸發寫入。舊版有兩個洩漏點：
+    defaultdict 的索引讀取會替每個查詢過的 IP 建出空 deque；視窗過期後
+    deque 雖被清空但鍵本身永遠留著。輪流換 IP 的掃描等於可以無限灌大它。
+    """
+    from app.core import auth
+
+    auth._attempts.clear()
+
+    # 1) 查詢從未失敗過的來源，不該憑空建出項目
+    assert auth.login_retry_after("203.0.113.1") == 0
+    assert len(auth._attempts) == 0
+
+    # 2) 視窗過期後，連鍵一起清掉
+    auth.record_failed_login("203.0.113.2", now=1000.0)
+    assert len(auth._attempts) == 1
+    assert auth.login_retry_after(
+        "203.0.113.2", now=1000.0 + auth.LOGIN_WINDOW_SECONDS + 1
+    ) == 0
+    assert len(auth._attempts) == 0
+
+    # 3) 視窗內未達上限的紀錄不可被誤清（限流本身要還能運作）
+    for offset in range(auth.LOGIN_MAX_ATTEMPTS):
+        auth.record_failed_login("203.0.113.3", now=1000.0 + offset)
+    assert auth.login_retry_after(
+        "203.0.113.3", now=1000.0 + auth.LOGIN_MAX_ATTEMPTS
+    ) > 0
+    assert len(auth._attempts) == 1
+
+    # 4) 大量輪替來源：失敗後再也不回來的 IP 沒有人替它清，需靠掃描收斂
+    auth._attempts.clear()
+    rotations = auth.ATTEMPTS_SWEEP_THRESHOLD * 3
+    for index in range(rotations):
+        auth.record_failed_login(f"198.51.100.{index}", now=1000.0 + index)
+    assert len(auth._attempts) < rotations
+    auth._attempts.clear()

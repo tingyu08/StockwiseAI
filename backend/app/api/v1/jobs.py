@@ -49,7 +49,7 @@ def get_job_run(run_id: int) -> Envelope:
 
 
 @router.post("/jobs/runs/{run_id}:retry", response_model=Envelope)
-async def retry_job_run(run_id: int) -> Envelope:
+def retry_job_run(run_id: int) -> Envelope:
     retry_job(run_id)
     db = SessionLocal()
     try:
@@ -60,7 +60,7 @@ async def retry_job_run(run_id: int) -> Envelope:
 
 
 @router.post("/jobs/{name}:run", response_model=Envelope)
-async def run_job(name: str, x_job_token: str = Header(default="")) -> Envelope:
+def run_job(name: str, x_job_token: str = Header(default="")) -> Envelope:
     settings = get_settings()
     if not settings.job_token or not hmac.compare_digest(x_job_token, settings.job_token):
         raise UnauthorizedError("JOB_TOKEN 驗證失敗")

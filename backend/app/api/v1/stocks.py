@@ -72,7 +72,7 @@ def get_dashboard(
 
 
 @router.get("/stocks/{symbol}/prices", response_model=Envelope)
-async def get_prices(
+def get_prices(
     symbol: str,
     market: Literal["TW", "US"] = Query(...),
     range_: Literal["3m", "6m", "1y"] = Query("1y", alias="range"),

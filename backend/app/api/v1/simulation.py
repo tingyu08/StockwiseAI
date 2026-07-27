@@ -90,7 +90,7 @@ def orders_view(market: Market, db: Session = Depends(get_db)) -> Envelope:
 
 
 @router.post("/simulation/{market}:decide", response_model=Envelope)
-async def trigger_decisions(market: Market) -> Envelope:
+def trigger_decisions(market: Market) -> Envelope:
     """手動觸發 AI 決策。會先自動對託管股跑當日批次分析（有快取不重複扣額度）。"""
     run_id = enqueue_job(
         f"simulation-decide-{market.lower()}",
