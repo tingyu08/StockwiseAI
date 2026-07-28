@@ -7,6 +7,7 @@ from app.core.db import get_db
 from app.core.envelope import Envelope, ok
 from app.core.exceptions import AppError
 from app.models import AiReport, DailyPrice, EtfNav, JobRun, Stock
+from app.services.premium_service import SUPPORTED_MARKETS as PREMIUM_MARKETS
 
 router = APIRouter(tags=["health"])
 
@@ -44,11 +45,18 @@ def data_status(db: Session = Depends(get_db)) -> Envelope:
             .join(Stock, DailyPrice.stock_id == Stock.id)
             .where(Stock.market == market)
         ).scalar_one_or_none()
-        latest_nav = db.execute(
-            select(func.max(EtfNav.date))
-            .join(Stock, EtfNav.stock_id == Stock.id)
-            .where(Stock.market == market)
-        ).scalar_one_or_none()
+        # 不支援折溢價的市場一律回 None：功能下架後 etf_nav 仍留著舊資料，
+        # 無條件查最大日期會把「已停止更新的歷史殘留」當成當前資料新鮮度回報
+        # （美股淨值停在下架前那天，看起來就像排程壞了）。
+        latest_nav = (
+            db.execute(
+                select(func.max(EtfNav.date))
+                .join(Stock, EtfNav.stock_id == Stock.id)
+                .where(Stock.market == market)
+            ).scalar_one_or_none()
+            if market in PREMIUM_MARKETS
+            else None
+        )
         ai_rows = db.execute(
             select(AiReport.kind, func.max(AiReport.trade_date))
             .join(Stock, AiReport.stock_id == Stock.id)

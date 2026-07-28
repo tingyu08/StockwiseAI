@@ -35,7 +35,9 @@ export function DataStatus() {
     <div className="flex flex-wrap gap-3 rounded-lg bg-neutral-50 px-3 py-2 text-xs text-neutral-500 dark:bg-neutral-900">
       <span>資料狀態</span>
       <span>行情 {status.latest_price_date ?? "尚無"}</span>
-      <span>NAV {status.latest_nav_date ?? "尚無"}</span>
+      {/* 折溢價僅台股支援：不支援的市場後端回 null，這裡整格不顯示，
+          免得出現一個永遠不會更新的日期 */}
+      {status.latest_nav_date && <span>NAV {status.latest_nav_date}</span>}
       {status.latest_ai_dates ? (
         <>
           <span>新聞 {status.latest_ai_dates.news ?? "尚無"}</span>

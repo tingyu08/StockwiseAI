@@ -10,6 +10,7 @@ from app.core.envelope import Envelope, ok
 from app.core.exceptions import NotFoundError
 from app.models import Stock
 from app.models.alert import Alert, AlertEvent
+from app.services.premium_service import SUPPORTED_MARKETS as PREMIUM_MARKETS
 
 router = APIRouter(tags=["alerts"])
 
@@ -85,8 +86,16 @@ def create_alert(body: CreateAlertBody, db: Session = Depends(get_db)) -> Envelo
     ).scalar_one_or_none()
     if stock is None:
         raise NotFoundError(f"尚未追蹤 {body.market}/{body.symbol}，請先加入自選")
-    if body.kind.startswith("premium") and stock.kind != "etf":
-        raise NotFoundError(f"{body.symbol} 不是 ETF，無法設定折溢價警示")
+    if body.kind.startswith("premium"):
+        # 市場檢查要在 ETF 檢查之前：美股 ETF（QQQ/VOO）過得了 ETF 這關，
+        # 但免費資料源沒有美股淨值，建起來的警示會拿著永遠不更新的舊折溢價
+        # 比對門檻——不是不觸發就是天天觸發，兩種都是靜默的錯。
+        if body.market not in PREMIUM_MARKETS:
+            raise NotFoundError(
+                f"{body.market} 不支援折溢價警示（免費資料源無該市場 ETF 淨值）"
+            )
+        if stock.kind != "etf":
+            raise NotFoundError(f"{body.symbol} 不是 ETF，無法設定折溢價警示")
     alert = Alert(stock_id=stock.id, kind=body.kind, threshold=body.threshold)
     db.add(alert)
     db.commit()

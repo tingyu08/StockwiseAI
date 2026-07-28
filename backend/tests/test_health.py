@@ -80,3 +80,34 @@ def test_data_status_reports_market_freshness(client):
             "latest_successful_job",
         }
         assert set(data[market]["latest_ai_dates"]) == {"news", "routine", "trade"}
+
+
+def test_data_status_hides_nav_for_markets_without_premium_support(client):
+    """美股折溢價已下架，但 etf_nav 還留著下架前的舊資料。
+
+    無條件查最大日期會把那個停止更新的日期當成資料新鮮度回報——正式環境
+    顯示「NAV 2026-07-14」，看起來像排程壞了。不支援的市場一律回 None。
+    """
+    from datetime import date
+
+    from app.core.db import SessionLocal
+    from app.models import EtfNav, Stock
+    from app.services.premium_service import SUPPORTED_MARKETS
+
+    assert "US" not in SUPPORTED_MARKETS  # 前提：美股不支援折溢價
+
+    db = SessionLocal()
+    try:
+        etf = Stock(symbol="NAVUS", market="US", name="殘留淨值 ETF",
+                    currency="USD", kind="etf")
+        db.add(etf)
+        db.commit()
+        db.refresh(etf)
+        db.add(EtfNav(stock_id=etf.id, date=date(2026, 7, 14),
+                      nav=100.0, close=100.1, premium_pct=0.1))
+        db.commit()
+    finally:
+        db.close()
+
+    data = client.get("/api/v1/data-status").json()["data"]
+    assert data["US"]["latest_nav_date"] is None
