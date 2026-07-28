@@ -40,8 +40,12 @@ async def add_security_headers(request: Request, call_next):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from app.providers.market.yf_cache import configure_yfinance_cache
     from app.services.job_service import run_worker_loop
 
+    # 必須在任何併發呼叫 yfinance 之前（哨兵會平行抓多檔），否則會噴一批
+    # TzCache 建立失敗的 ERROR——詳見 yf_cache 模組說明
+    configure_yfinance_cache()
     worker_task = asyncio.create_task(run_worker_loop())
     if get_settings().scheduler_mode == "internal":
         from app.scheduler.jobs import start_scheduler

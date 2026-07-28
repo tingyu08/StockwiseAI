@@ -73,7 +73,9 @@ def usage_snapshot(db: Session) -> list[dict]:
 def remaining_today(db: Session, model: str) -> int:
     quotas = get_settings().load_quotas()
     if model not in quotas:
-        raise QuotaExceededError(f"未設定 {model} 的額度，請檢查 quotas.yaml")
+        raise QuotaExceededError(
+            f"未設定 {model} 的額度，請檢查 quotas.yaml", scope="config"
+        )
     return max(0, quotas[model].rpd - used_today(db, model))
 
 
@@ -86,10 +88,12 @@ def ensure_quota(
     """Reject calls that would exceed the model's daily or rolling-minute quota."""
     quotas = get_settings().load_quotas()
     if model not in quotas:
-        raise QuotaExceededError(f"未設定 {model} 的額度，請檢查 quotas.yaml")
+        raise QuotaExceededError(
+            f"未設定 {model} 的額度，請檢查 quotas.yaml", scope="config"
+        )
     quota = quotas[model]
     if remaining_today(db, model) < needed:
-        raise QuotaExceededError(f"{model} 今日免費額度已用盡")
+        raise QuotaExceededError(f"{model} 今日免費額度已用盡", scope="rpd")
 
     now = _utc_now_naive()
     minute_start = now - timedelta(minutes=1)
@@ -111,7 +115,7 @@ def ensure_quota(
         )
     ).scalar_one()
     if rpm_used + needed > quota.rpm:
-        raise QuotaExceededError(f"{model} RPM 額度已用盡")
+        raise QuotaExceededError(f"{model} RPM 額度已用盡", scope="rpm")
 
     tokens_used = db.execute(
         select(
@@ -132,7 +136,7 @@ def ensure_quota(
         )
     ).scalar_one()
     if int(tokens_used) + int(reserved_tokens) + estimated_tokens > quota.tpm:
-        raise QuotaExceededError(f"{model} TPM 額度已用盡")
+        raise QuotaExceededError(f"{model} TPM 額度已用盡", scope="tpm")
 
 
 def reserve_quota(db: Session, model: str, estimated_tokens: int = 0) -> int:

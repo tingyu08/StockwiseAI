@@ -138,7 +138,11 @@ class AntigravityProvider:
             # 用 QuotaExceededError（HTTP 429）而非 UpstreamError：
             # news_research_daily 只對 QuotaExceededError 提前收工，
             # 否則會繼續逐檔轟炸一個已經在限流的 API。
-            raise QuotaExceededError("Antigravity 被 Google 端限流（429）")
+            # scope=upstream：Google 不告訴我們是日額度還是分鐘級限流，
+            # 無從分辨就保守收工（我方的分鐘級限流由本地 rate_limiter 標成 rpm/tpm）。
+            raise QuotaExceededError(
+                "Antigravity 被 Google 端限流（429）", scope="upstream"
+            )
         if res.status_code != 200:
             logger.error("Antigravity create %s: %s", res.status_code, res.text[:500])
             raise UpstreamError(f"Antigravity API 錯誤（{res.status_code}）")

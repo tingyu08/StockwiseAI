@@ -6,6 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.core.db import SessionLocal
+from app.core.exceptions import UpstreamError
 from app.models import DailyPrice, SimOrder
 from app.services.sim.decision import run_decisions
 from app.services.sim.engine import calc_fee, get_or_create_account
@@ -15,9 +16,14 @@ from app.services.trading_calendar import is_trading_day, last_trading_session
 from tests.test_simulation import _add_report, _seed_stock
 
 
-def _seed_position(db, symbol, market="TW", entry_price=100.0, qty=100.0):
-    """建立持倉：filled 買單＋附 stop_loss=80 / target_price_high=120 的報告。"""
-    stock = _seed_stock(db, symbol, market=market)
+def _seed_position(db, symbol, market="TW", entry_price=100.0, qty=100.0,
+                   ai_managed=True):
+    """建立持倉：filled 買單＋附 stop_loss=80 / target_price_high=120 的報告。
+
+    ai_managed=False 用於只驗證哨兵的測試：哨兵看的是持倉（current_positions）
+    而非自選清單，多掛託管旗標只會讓後續測試的每日決策多花模擬帳戶的現金。
+    """
+    stock = _seed_stock(db, symbol, market=market, ai_managed=ai_managed)
     report = _add_report(db, stock, action="buy", confidence=0.9, stop_loss=80.0)
     account = get_or_create_account(db, market)
     db.add(SimOrder(
@@ -101,22 +107,167 @@ async def test_sentinel_no_action_between_levels(client, monkeypatch, _open_mark
         db.close()
 
 
-async def test_sentinel_skips_when_pending_order_exists(client, monkeypatch, _open_market):
+async def test_sentinel_supersedes_pending_order_instead_of_skipping(
+    client, monkeypatch, _open_market
+):
+    """同股已有 pending 日線委託單時，哨兵必須接管而非禮讓。
+
+    日線單建立於開盤前、要到下一個開盤才撮合，橫跨整個交易時段。
+    禮讓它等於持倉盤中觸發停損卻得等明天開盤才出場——停損的意義就是不等。
+    正式環境曾每小時撞一次唯一索引（Postgres ERROR）且應用層完全無紀錄。
+    """
     db = SessionLocal()
     try:
-        stock, account = _seed_position(db, "9204")
+        stock, account = _seed_position(db, "9204", ai_managed=False)
+        stale = SimOrder(
+            account_id=account.id, stock_id=stock.id, side="sell", qty=100.0,
+            status="pending", decided_by="ai",
+        )
+        db.add(stale)
+        db.commit()
+        stale_id = stale.id
+        _patch_quotes(monkeypatch, {"9204": 75.0})
+
+        result = await run_exit_sentinel(db, "TW")
+
+        assert len(result["exits"]) == 1
+        assert result["exits"][0]["kind"] == "stop_loss"
+        assert result["exits"][0]["superseded_pending"] is True
+        assert result["blocked"] == []
+        # 舊的日線單被作廢並留下原因，不是被默默覆蓋
+        db.expire_all()
+        stale_after = db.get(SimOrder, stale_id)
+        assert stale_after.status == "rejected"
+        assert "哨兵接管" in stale_after.reject_reason
+        # 持倉真的出場了（這才是這個修正的重點）
+        assert current_positions(db, account).get(stock.id) is None
+    finally:
+        db.close()
+
+
+async def test_sentinel_supersede_leaves_no_pending_gap(client, monkeypatch, _open_market):
+    """接管後不得留下「舊單作廢、新出場單沒建立」的空窗。"""
+    db = SessionLocal()
+    try:
+        stock, account = _seed_position(db, "9210", ai_managed=False)
+        db.add(SimOrder(
+            account_id=account.id, stock_id=stock.id, side="buy", qty=50.0,
+            status="pending", decided_by="ai",
+        ))
+        db.commit()
+        _patch_quotes(monkeypatch, {"9210": 75.0})
+
+        await run_exit_sentinel(db, "TW")
+
+        orders = db.execute(
+            select(SimOrder).where(SimOrder.stock_id == stock.id)
+        ).scalars().all()
+        # 不留任何 pending：要嘛 rejected（被接管）要嘛 filled（買進/出場）
+        assert [o for o in orders if o.status == "pending"] == []
+        assert any(o.fill_kind == "stop_loss" and o.status == "filled" for o in orders)
+    finally:
+        db.close()
+
+
+async def test_supersede_does_not_rely_on_hitting_the_unique_index(
+    client, monkeypatch, _open_market
+):
+    """正常接管路徑不得靠「撞唯一索引再處理」。
+
+    撞索引雖然也能運作，但每次都會在 Postgres 留下一筆 ERROR
+    （正式環境每小時一筆），把真正的資料庫錯誤淹沒。
+    先讓開再 INSERT ⇒ 建單只會嘗試一次。
+    """
+    from app.services.sim import sentinel as sentinel_module
+
+    db = SessionLocal()
+    try:
+        stock, account = _seed_position(db, "9211", ai_managed=False)
         db.add(SimOrder(
             account_id=account.id, stock_id=stock.id, side="sell", qty=100.0,
             status="pending", decided_by="ai",
         ))
         db.commit()
-        _patch_quotes(monkeypatch, {"9204": 75.0})
+        _patch_quotes(monkeypatch, {"9211": 75.0})
+
+        attempts = []
+        original = sentinel_module._insert_pending
+
+        def counting(*args, **kwargs):
+            attempts.append(1)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(sentinel_module, "_insert_pending", counting)
 
         result = await run_exit_sentinel(db, "TW")
 
-        assert result["exits"] == []  # 讓既有 pending 流程處理，不重複下單
+        assert result["exits"][0]["superseded_pending"] is True
+        assert len(attempts) == 1  # 沒有「第一次撞索引、第二次才成功」
     finally:
         db.close()
+
+
+async def test_sentinel_fails_loudly_when_no_position_can_be_priced(
+    client, monkeypatch, _open_market
+):
+    """有持倉卻一檔報價都拿不到＝這一輪停損完全沒有保護作用，必須算失敗。
+
+    正式環境曾整輪 6 檔全部「無報價，本輪跳過」（Yahoo 封鎖機房 IP），
+    但工作只寫 INFO 並回報成功——停損整段時間沒運作，看起來卻一切正常。
+    """
+    db = SessionLocal()
+    try:
+        _seed_position(db, "9206", ai_managed=False)
+        _seed_position(db, "9207", ai_managed=False)
+        _patch_quotes(monkeypatch, {})  # 兩檔都拿不到報價
+
+        with pytest.raises(UpstreamError) as exc:
+            await run_exit_sentinel(db, "TW")
+        assert "9206" in exc.value.message and "9207" in exc.value.message
+    finally:
+        db.close()
+
+
+async def test_sentinel_succeeds_when_only_some_positions_are_unpriced(
+    client, monkeypatch, _open_market
+):
+    """部分拿不到報價仍屬正常運作，不可整輪判失敗（否則會天天誤報）。"""
+    db = SessionLocal()
+    try:
+        _seed_position(db, "9208", ai_managed=False)
+        stock_ok, account = _seed_position(db, "9209", ai_managed=False)
+        _patch_quotes(monkeypatch, {"9209": 75.0})
+
+        # 測試共用同一個 TW 模擬帳戶，先前測試的持倉也在裡面——
+        # 只斷言這兩檔的結果，不假設帳戶內只有它們
+        result = await run_exit_sentinel(db, "TW")
+
+        assert "9208" in result["unpriced"]
+        assert "9209" not in result["unpriced"]
+        assert "9209" in [e["symbol"] for e in result["exits"]]
+        assert current_positions(db, account).get(stock_ok.id) is None
+    finally:
+        db.close()
+
+
+def test_sentinel_jobs_do_not_retry_immediately(monkeypatch):
+    """哨兵失敗＝上游在限流我們，立刻重打三次只會加深封鎖。
+
+    每小時的下一輪才是正確的重試節奏；其餘排程仍保留預設重試次數。
+    """
+    from app.scheduler import jobs as jobs_module
+
+    captured = {}
+
+    def fake_enqueue(name, **kwargs):
+        captured[name] = kwargs.get("max_attempts")
+
+    monkeypatch.setattr("app.services.job_service.enqueue_job", fake_enqueue)
+    jobs_module._enqueue_scheduled("sentinel-us")
+    jobs_module._enqueue_scheduled("sync-tw")
+
+    assert captured["sentinel-us"] == 1
+    assert captured["sync-tw"] == 3
 
 
 async def test_sentinel_noop_on_non_trading_day(client, monkeypatch):

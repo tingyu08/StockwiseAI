@@ -121,19 +121,34 @@ async def overview_daily(market: str) -> dict:
         db.close()
 
 
+# 撞到分鐘級額度（RPM/TPM）後的等待秒數，第 n 次重試等 n 倍。
+# 單檔新聞研究約 34K tokens、TPM 上限 100K，故一分鐘內只容得下兩檔；
+# agent 任務跑得快時三檔會擠進同一個滾動視窗而被擋下——等視窗滾過即可，
+# 這跟「今日額度用盡」是完全不同的事。
+NEWS_QUOTA_WAIT_SEC = 20
+NEWS_QUOTA_RETRIES = 3
+
+
 async def news_research_daily(market: str) -> dict:
     """AI 託管清單的每日新聞研究（Antigravity），於例行批次分析前執行。
 
-    單檔失敗不中斷（agent 任務較不穩定）；額度盡即提前收工，
-    已完成的摘要仍會被當日批次分析吃到。
+    單檔失敗不中斷（agent 任務較不穩定）。額度處理分兩種：
+    - RPM/TPM（分鐘級視窗滿了）→ 等待後重試同一檔，不放棄後面的股票
+    - RPD／上游 429（今日沒了）→ 提前收工，已完成的摘要仍會被當日批次分析吃到
+
+    兩者若不分辨，分鐘級限流會被誤當成今日用盡：清單順序固定，
+    等於後段的股票永遠拿不到新聞研究。
     """
     if gate := _non_trading_gate(market):
         return gate
+    import asyncio
+
     from app.core.exceptions import QuotaExceededError
     from app.services.news_service import run_news_research
 
     db = SessionLocal()
-    researched, failed = 0, []
+    researched, failed, skipped = 0, [], []
+    quota_stopped: str | None = None
     try:
         stocks = db.execute(
             select(Stock)
@@ -141,16 +156,49 @@ async def news_research_daily(market: str) -> dict:
             .where(Stock.market == market, WatchlistItem.ai_managed.is_(True))
         ).scalars().all()
         for stock in stocks:
-            try:
-                await run_news_research(db, stock)
-                researched += 1
-            except QuotaExceededError:
-                logger.warning("Antigravity 額度已盡，%s 新聞研究提前結束", market)
+            if quota_stopped:
+                skipped.append(stock.symbol)
+                continue
+            for attempt in range(1, NEWS_QUOTA_RETRIES + 1):
+                try:
+                    await run_news_research(db, stock)
+                    researched += 1
+                except QuotaExceededError as exc:
+                    if exc.scope == "config":
+                        # quotas.yaml 漏設模型，跟額度用盡是兩回事。
+                        # 吞掉它會讓「設定錯誤」每天偽裝成「今日額度已用盡」。
+                        raise
+                    if not exc.retryable:
+                        quota_stopped = exc.message
+                        logger.warning(
+                            "%s 新聞研究提前收工（%s）：%s，已完成 %d/%d 檔",
+                            market, exc.scope, exc.message, researched, len(stocks),
+                        )
+                        skipped.append(stock.symbol)  # 其餘由外層迴圈的閘門補上
+                        break
+                    if attempt == NEWS_QUOTA_RETRIES:
+                        logger.warning(
+                            "%s 新聞研究 %s：分鐘級額度重試 %d 次仍未通過（%s），略過本檔",
+                            market, stock.symbol, attempt, exc.message,
+                        )
+                        skipped.append(stock.symbol)
+                        break
+                    wait = NEWS_QUOTA_WAIT_SEC * attempt
+                    logger.info(
+                        "%s 新聞研究 %s：%s，%d 秒後重試（第 %d 次）",
+                        market, stock.symbol, exc.message, wait, attempt,
+                    )
+                    await asyncio.sleep(wait)
+                    continue
+                except Exception:
+                    logger.exception("news research %s/%s failed", market, stock.symbol)
+                    failed.append(stock.symbol)
                 break
-            except Exception:
-                logger.exception("news research %s/%s failed", market, stock.symbol)
-                failed.append(stock.symbol)
-        return {"market": market, "researched": researched, "failed": failed}
+        return {
+            "market": market, "researched": researched,
+            "failed": failed, "skipped": skipped,
+            "quota_stopped": quota_stopped,
+        }
     finally:
         db.close()  # Neon 紀律：job 結束即釋放連線
 
@@ -221,7 +269,12 @@ async def alert_check_daily(market: str) -> dict:
 
 
 async def exit_sentinel_job(market: str) -> dict:
-    """盤中出場哨兵：持倉的停損/停利即時檢查（零 AI 呼叫，非交易時段自動 no-op）。"""
+    """盤中出場哨兵：持倉的停損/停利即時檢查（零 AI 呼叫，非交易時段自動 no-op）。
+
+    不重試（max_attempts=1，見 _enqueue_scheduled）：這個工作唯一的失敗原因是
+    「一檔報價都拿不到」，而那幾乎必然是上游在限流我們——立刻重打三次只會
+    加深封鎖。哨兵本來就每小時再跑一輪，那才是正確的重試節奏。
+    """
     from app.services.sim.sentinel import run_exit_sentinel
 
     db = SessionLocal()
@@ -281,7 +334,8 @@ def _enqueue_scheduled(name: str) -> None:
     from app.services.job_service import enqueue_job
 
     enqueue_job(name, job_type="scheduled", payload={"name": name},
-                idempotency_key=f"scheduled:{name}")
+                idempotency_key=f"scheduled:{name}",
+                max_attempts=1 if name.startswith("sentinel-") else 3)
 
 
 def start_sentinel_scheduler() -> AsyncIOScheduler:

@@ -25,7 +25,30 @@ class NotFoundError(AppError):
 
 
 class QuotaExceededError(AppError):
+    """AI 額度不足。
+
+    scope 是給呼叫端判斷「該放棄還是該等一下」用的，缺了它會出事：
+    RPD 用盡代表今天沒了（批次工作應收工），但 RPM/TPM 只是這一分鐘滿了，
+    等數十秒就恢復。兩者若都只看得到一個 QuotaExceededError，批次工作會把
+    「這一分鐘滿了」當成「今天沒了」而放棄整批剩餘工作。
+
+    - rpd      今日請求數用盡 → 放棄
+    - rpm/tpm  當下這一分鐘的請求數／token 數滿了 → 稍候重試
+    - upstream 上游（Google）回 429 → 無從得知是哪一種，保守放棄
+    - config   quotas.yaml 沒有這個模型 → 設定錯誤，不該被當成額度用盡吞掉
+    """
+
     status_code = 429
+    RETRYABLE_SCOPES = ("rpm", "tpm")
+
+    def __init__(self, message: str, scope: str = "rpd"):
+        self.scope = scope
+        super().__init__(message)
+
+    @property
+    def retryable(self) -> bool:
+        """等一下就會恢復（分鐘級視窗），而非今日已無額度。"""
+        return self.scope in self.RETRYABLE_SCOPES
 
 
 class UpstreamError(AppError):
