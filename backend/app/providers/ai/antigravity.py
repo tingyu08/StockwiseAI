@@ -25,6 +25,11 @@ API_REVISION = "2026-05-20"  # background 執行需要
 
 POLL_INTERVAL_SEC = 5
 MAX_WAIT_SEC = 480  # agent 任務通常 1~3 分鐘，8 分鐘仍未完成視為失敗
+# 輪詢時偶發 403 permission_denied / 404 的重試上限。
+# 任務此刻已建立、額度也已扣掉，為了一次偶發的權限錯誤就整個放棄，
+# 等於白白丟掉已付出的額度（實測同一輪其他輪詢皆為 200，故屬偶發）。
+# 但真的權限有問題時也不能無止盡等，故設上限。
+POLL_FORBIDDEN_RETRIES = 3
 # agent 任務會自己上網搜尋與抓網頁，token 量遠大於一次 generateContent。
 # 實測單檔新聞研究約 34K tokens（其中 input 約 31K 多為 grounded search 內容）。
 # 預約時若估 0，TPM 防線對 in-flight 任務等於完全失效（額度只有 100K）。
@@ -156,6 +161,7 @@ class AntigravityProvider:
             raise UpstreamError("Antigravity 回應缺少 interaction id")
 
         deadline = monotonic() + MAX_WAIT_SEC
+        forbidden_seen = 0
         async with httpx.AsyncClient(timeout=30) as client:
             while interaction.get("status") in ("in_progress", None, "queued"):
                 remaining = deadline - monotonic()
@@ -168,7 +174,13 @@ class AntigravityProvider:
                 try:
                     res = await client.get(
                         f"{INTERACTIONS_URL}/{interaction_id}",
-                        headers={"x-goog-api-key": settings.gemini_api_key},
+                        headers={
+                            "x-goog-api-key": settings.gemini_api_key,
+                            # 建立任務時帶了 Api-Revision（background 執行需要），
+                            # 讀回同一個 background 任務卻不帶，是不一致；
+                            # 正式環境出現過偶發的 403 permission_denied。
+                            "Api-Revision": API_REVISION,
+                        },
                         timeout=min(30, remaining),
                     )
                 except httpx.TimeoutException:
@@ -192,6 +204,17 @@ class AntigravityProvider:
                         "Antigravity poll %s (transient); retrying interaction %s",
                         res.status_code,
                         interaction_id,
+                    )
+                    continue
+                if res.status_code in (403, 404) and forbidden_seen < POLL_FORBIDDEN_RETRIES:
+                    # 剛建立的 background 任務偶爾會短暫回 403/404（尚未在讀取端
+                    # 就緒）。任務已在跑、額度也已扣，為此放棄等於白付；
+                    # 有限次重試後仍失敗才視為真的沒救。
+                    forbidden_seen += 1
+                    logger.warning(
+                        "Antigravity poll %s（第 %d/%d 次，重試）：%s",
+                        res.status_code, forbidden_seen, POLL_FORBIDDEN_RETRIES,
+                        res.text[:200],
                     )
                     continue
                 if res.status_code != 200:
