@@ -15,6 +15,7 @@ import yfinance as yf
 from app.core.exceptions import UpstreamError
 from app.providers.market import finmind_us
 from app.providers.market.base import MarketDataProvider, NavRow, OhlcvRow, StockInfo
+from app.providers.market.yf_cache import yfinance_guard
 
 logger = logging.getLogger(__name__)
 
@@ -66,8 +67,11 @@ class YFinanceProvider(MarketDataProvider):
 
         def _get() -> StockInfo | None:
             try:
-                t = yf.Ticker(symbol)
-                info = t.info
+                # 序列化：yfinance 時區快取為 SQLite，併發會撞
+                # database is locked（見 yf_cache._YF_LOCK）
+                with yfinance_guard():
+                    t = yf.Ticker(symbol)
+                    info = t.info
                 if not info or info.get("regularMarketPrice") is None:
                     return None
                 quote_type = (info.get("quoteType") or "").upper()
@@ -89,12 +93,13 @@ class YFinanceProvider(MarketDataProvider):
 
     async def get_daily_prices(self, symbol: str, start: date, end: date) -> list[OhlcvRow]:
         def _download() -> list[OhlcvRow]:
-            df = yf.Ticker(symbol).history(
-                start=start.isoformat(),
-                end=(end + timedelta(days=1)).isoformat(),  # yfinance end 為排除端點
-                interval="1d",
-                auto_adjust=False,
-            )
+            with yfinance_guard():  # 見 yf_cache._YF_LOCK
+                df = yf.Ticker(symbol).history(
+                    start=start.isoformat(),
+                    end=(end + timedelta(days=1)).isoformat(),  # yfinance end 為排除端點
+                    interval="1d",
+                    auto_adjust=False,
+                )
             if df is None or df.empty:
                 return []
             rows = []

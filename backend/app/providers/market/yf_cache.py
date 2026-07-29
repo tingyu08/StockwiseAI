@@ -17,11 +17,45 @@
 """
 import logging
 import tempfile
+from contextlib import contextmanager
 from pathlib import Path
+from threading import Lock
 
 logger = logging.getLogger(__name__)
 
 TZ_CACHE_DIR = Path(tempfile.gettempdir()) / "stockwise-yfinance-tz"
+
+# yfinance 是同步庫，我們一律用 asyncio.to_thread 包起來平行呼叫。但時區快取
+# 是一個 SQLite 檔，多條 thread 同時第一次查同一批標的就會撞在寫入上，
+# 冒出 OperationalError: database is locked（正式環境實際發生過）。
+#
+# 加長等待無效：實測 busy_timeout 已是 5000ms、journal_mode 已是 wal，
+# 而 WAL 的寫寫升級衝突不會觸發 busy handler。唯一可靠的辦法是不要併發。
+#
+# 序列化的代價很小——呼叫端是每小時一次的哨兵，幾檔標的依序抓只慢數秒；
+# 而且不再一次對 Yahoo 送出整批併發請求，對機房 IP 常遇到的限流也是好事。
+_YF_LOCK = Lock()
+
+# 取不到鎖時的等待上限。設有上限而非無限等：yfinance 偶爾會卡住，
+# 沒有上限的話一檔卡住會拖垮整批（原本的行為是單檔失敗不影響其他檔）。
+YF_LOCK_TIMEOUT_SEC = 60
+
+
+class YFinanceBusyError(RuntimeError):
+    """等不到 yfinance 的序列化鎖——視同該標的本輪取不到資料。"""
+
+
+@contextmanager
+def yfinance_guard():
+    """序列化所有 yfinance 呼叫（見 _YF_LOCK 的說明）。"""
+    if not _YF_LOCK.acquire(timeout=YF_LOCK_TIMEOUT_SEC):
+        raise YFinanceBusyError(
+            f"等待 yfinance 序列化鎖逾時（{YF_LOCK_TIMEOUT_SEC}s）"
+        )
+    try:
+        yield
+    finally:
+        _YF_LOCK.release()
 
 
 def configure_yfinance_cache() -> Path | None:

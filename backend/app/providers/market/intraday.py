@@ -71,9 +71,14 @@ def _parse_price(raw: str | None) -> float | None:
 async def _us_quotes(symbols: list[str]) -> dict[str, float]:
     import yfinance as yf
 
+    from app.providers.market.yf_cache import yfinance_guard
+
     def _one(symbol: str) -> float | None:
         try:
-            price = yf.Ticker(symbol).fast_info["last_price"]
+            # 序列化：yfinance 的時區快取是 SQLite，併發首次查詢會撞
+            # database is locked（見 yf_cache._YF_LOCK）
+            with yfinance_guard():
+                price = yf.Ticker(symbol).fast_info["last_price"]
             return float(price) if price and price > 0 else None
         except Exception as exc:
             logger.warning("yfinance 即時報價 %s 失敗：%s", symbol, exc)

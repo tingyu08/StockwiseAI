@@ -14,6 +14,7 @@ import pandas as pd
 import yfinance as yf
 
 from app.providers.market import finmind_us
+from app.providers.market.yf_cache import yfinance_guard
 from app.services.time_service import market_today
 
 logger = logging.getLogger(__name__)
@@ -71,9 +72,12 @@ def _history(
     if df is not None:
         logger.warning("FinMind %s 查無資料（改試 yfinance）", ticker)
     try:
-        hist = yf.Ticker(ticker).history(
-            period=f"{period_days}d", interval="1d", auto_adjust=False
-        )
+        # 序列化：預抓階段是平行的，而 yfinance 的時區快取（SQLite）
+        # 併發首次查詢會撞 database is locked（見 yf_cache._YF_LOCK）
+        with yfinance_guard():
+            hist = yf.Ticker(ticker).history(
+                period=f"{period_days}d", interval="1d", auto_adjust=False
+            )
         if hist is not None and len(hist["Close"].dropna()) >= 2:
             return hist
         return None
