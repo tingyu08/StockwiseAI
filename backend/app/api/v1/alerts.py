@@ -26,7 +26,9 @@ KIND_LABELS = {
 
 class CreateAlertBody(BaseModel):
     market: Literal["TW", "US"]
-    symbol: str = Field(min_length=1, max_length=16)
+    # 與 watchlist／stocks 同一組限制：symbol 是外部資料源的查詢鍵，
+    # 格式驗證應該在所有入口一致，而不是靠「這支剛好只查 DB」
+    symbol: str = Field(min_length=1, max_length=16, pattern=r"^[A-Za-z0-9.\-]+$")
     kind: AlertKind
     threshold: float
 

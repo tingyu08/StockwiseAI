@@ -23,6 +23,11 @@ from app.models import User, UserSession
 router = APIRouter(prefix="/auth", tags=["auth"])
 hasher = PasswordHasher(memory_cost=19456, time_cost=2, parallelism=1, type=Type.ID)
 
+# 帳號不存在時拿來比對的假雜湊。少了它，「查無此人」會直接回傳而不跑
+# Argon2（約 50~100ms），回應時間本身就成為「這個帳號存不存在」的預言機。
+# 在模組載入時算一次即可。
+_TIMING_EQUALISER = hasher.hash("timing-equaliser-not-a-real-password")
+
 
 class Credentials(BaseModel):
     username: str = Field(max_length=64)
@@ -70,7 +75,12 @@ def login(body: Credentials, request: Request, response: Response):
     with SessionLocal() as db:
         user = db.scalar(select(User).where(User.username_normalized == body.username.strip().casefold()))
         try:
-            valid = user is not None and hasher.verify(user.password_hash, body.password)
+            if user is None:
+                # 走完整的雜湊驗證再判失敗，讓兩條路徑耗時相當（見 _TIMING_EQUALISER）
+                hasher.verify(_TIMING_EQUALISER, body.password)
+                valid = False
+            else:
+                valid = hasher.verify(user.password_hash, body.password)
         except VerifyMismatchError:
             valid = False
         if not valid:

@@ -5,7 +5,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import delete
 from sqlalchemy.orm import Session
 
-from app.models import AiQuotaReservation, AiUsageLog, JobRun
+from app.models import AiQuotaReservation, AiUsageLog, JobRun, UserSession
 from app.services.job_service import utc_now
 
 # 預約正常會在 AI 呼叫結束時被 finalize/cancel 掉；殘留的都是行程被砍、
@@ -49,10 +49,16 @@ def cleanup_expired_records(
             < now - timedelta(minutes=stale_reservation_minutes)
         )
     ).rowcount
+    # 過期 session 已無法用來認證（get_session 會擋），但列本身永遠留著：
+    # 資料表無上限成長，且長期保存著 token 雜湊——沒有理由留存已失效的憑證。
+    expired_sessions = db.execute(
+        delete(UserSession).where(UserSession.expires_at < now)
+    ).rowcount
     db.commit()
     return {
         "successful_jobs_deleted": successful or 0,
         "failed_jobs_deleted": failed or 0,
         "usage_logs_deleted": usage or 0,
         "stale_reservations_deleted": stale_reservations or 0,
+        "expired_sessions_deleted": expired_sessions or 0,
     }

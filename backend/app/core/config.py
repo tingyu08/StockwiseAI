@@ -45,6 +45,11 @@ class Settings(BaseSettings):
     gemini_max_retries: int = Field(default=2, ge=0, le=5)
     scheduler_mode: str = Field(default="internal", pattern="^(internal|external)$")
     cors_origins: str = "http://localhost:3000,http://localhost:3001"
+    # 可信任的反向代理來源。位於代理後方時，連線的 peer 永遠是代理本身，
+    # 登入限流會把所有訪客歸成同一個桶（見 auth.client_identifier）。
+    # "private" = 迴環與 RFC1918 私有網段（容器部署在代理後方的通用情況）；
+    # 也可填逗號分隔的 IP/CIDR；留空則完全不信任 X-Forwarded-For。
+    trusted_proxy_ips: str = "private"
     backup_dir: str = str(BASE_DIR / "data" / "backups")
 
     quotas_file: Path = BASE_DIR / "app" / "core" / "quotas.yaml"

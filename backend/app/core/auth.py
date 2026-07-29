@@ -2,6 +2,8 @@
 
 import hashlib
 import hmac
+import ipaddress
+import logging
 import threading
 import time
 from collections import defaultdict, deque
@@ -16,6 +18,8 @@ from app.core.config import get_settings
 from app.core.db import SessionLocal
 from app.core.envelope import fail
 from app.models import UserSession
+
+logger = logging.getLogger(__name__)
 
 SESSION_COOKIE = "stockwise_session"
 CSRF_COOKIE = "stockwise_csrf"
@@ -95,8 +99,77 @@ def clear_failed_logins(client_id: str) -> None:
         _attempts.pop(client_id, None)
 
 
+_PRIVATE_NETWORKS = tuple(
+    ipaddress.ip_network(cidr)
+    for cidr in (
+        "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+        "169.254.0.0/16", "::1/128", "fc00::/7", "fe80::/10",
+    )
+)
+
+
+def _trusted_proxy_networks() -> tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...]:
+    raw = get_settings().trusted_proxy_ips.strip()
+    if not raw:
+        return ()
+    if raw == "private":
+        return _PRIVATE_NETWORKS
+    networks = []
+    for item in raw.split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            networks.append(ipaddress.ip_network(item, strict=False))
+        except ValueError:
+            # 設定錯字不該讓整個服務起不來，但必須留下紀錄——
+            # 靜默忽略會讓限流悄悄退回「全站同一個桶」
+            logger.warning("TRUSTED_PROXY_IPS 有無法解析的項目，已略過：%s", item)
+    return tuple(networks)
+
+
+def _is_trusted_proxy(host: str) -> bool:
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return any(address in network for network in _trusted_proxy_networks())
+
+
+def _normalise_forwarded_host(value: str) -> str:
+    """XFF 項目可能帶埠或是 IPv6 括號形式，取出純位址。"""
+    value = value.strip()
+    if value.startswith("["):  # [::1]:8080
+        return value[1:].split("]", 1)[0]
+    if value.count(":") == 1:  # 1.2.3.4:5678（IPv6 會有多個冒號，不可截斷）
+        return value.split(":", 1)[0]
+    return value
+
+
 def client_identifier(request: Request) -> str:
-    return request.client.host if request.client else "unknown"
+    """登入限流的來源識別。
+
+    直連時 peer 就是來源。但位於反向代理後方時，peer 永遠是代理——
+    正式環境的 log 每一行都是 Zeabur ingress 的 10.42.0.1，等於所有訪客
+    共用同一個限流桶：任何人連打 5 次錯誤密碼就能把唯一的擁有者鎖在門外，
+    每 5 分鐘重複一次即可無限期封鎖，且完全不需要任何憑證。
+
+    故 peer 屬於信任代理時改採 X-Forwarded-For，並且**由右往左**取第一個
+    非信任項。方向很重要：右端是信任代理實際觀察到的來源，左端則完全由
+    用戶端自填。取最左（uvicorn 的 --forwarded-allow-ips="*" 就是這個行為）
+    會讓攻擊者每次送不同的假 IP，限流直接失效——比原本的問題更糟。
+    """
+    peer = request.client.host if request.client else ""
+    if not peer:
+        return "unknown"
+    if not _is_trusted_proxy(peer):
+        return peer
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    for candidate in reversed(forwarded.split(",")):
+        host = _normalise_forwarded_host(candidate)
+        if host and not _is_trusted_proxy(host):
+            return host
+    return peer  # 整條鏈都是信任代理（或沒有 XFF）：退回 peer，不會 fail-open
 
 
 def _valid_job_token(request: Request) -> bool:
