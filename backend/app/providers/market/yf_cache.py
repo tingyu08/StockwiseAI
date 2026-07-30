@@ -70,4 +70,30 @@ def configure_yfinance_cache() -> Path | None:
         logger.warning("yfinance 時區快取初始化失敗，改為不使用快取", exc_info=True)
         return None
     logger.info("yfinance 時區快取位置：%s", TZ_CACHE_DIR)
+    log_http_backend()
     return TZ_CACHE_DIR
+
+
+def log_http_backend() -> bool | None:
+    """啟動時記錄 yfinance 是否啟用 curl_cffi 的瀏覽器 TLS 偽裝。
+
+    沒有這行的代價實際發生過：美股報價整批 429 時，無法分辨是
+    (a) 來源 IP 被 Yahoo 限流，還是 (b) 容器裡 curl_cffi 沒裝成功、
+    退回沒有 TLS 偽裝的 requests。兩者症狀相同但修法完全不同，
+    當時得靠「log 裡沒有 yfinance 的 fallback warning」反推。
+    """
+    try:
+        from yfinance import _http as yf_http
+
+        enabled = bool(yf_http.HAS_CURL_CFFI)
+    except Exception:
+        logger.warning("無法判斷 yfinance 的 HTTP backend", exc_info=True)
+        return None
+    if enabled:
+        logger.info("yfinance HTTP backend：curl_cffi（有瀏覽器 TLS 偽裝）")
+    else:
+        logger.warning(
+            "yfinance HTTP backend 退回 requests（無 TLS 偽裝）"
+            "——Yahoo 極可能限流或封鎖，請確認容器內 curl_cffi 可匯入"
+        )
+    return enabled

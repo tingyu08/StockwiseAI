@@ -33,6 +33,36 @@ def test_lifespan_configures_cache_before_starting_workers():
     assert source.index("configure_yfinance_cache()") < source.index("run_worker_loop()")
 
 
+def test_http_backend_is_reported_at_startup(caplog):
+    """啟動就要看得出有沒有 TLS 偽裝。
+
+    缺這個資訊時，「美股報價整批 429」無法分辨是來源 IP 被限流，
+    還是容器裡 curl_cffi 沒裝起來退回了無偽裝的 requests——
+    兩者症狀相同、修法完全不同。
+    """
+    from app.providers.market.yf_cache import log_http_backend
+
+    with caplog.at_level("INFO", logger="app.providers.market.yf_cache"):
+        enabled = log_http_backend()
+
+    assert enabled is True  # 本機/CI 都應該有 curl_cffi（在 requirements.lock 內）
+    assert "curl_cffi" in caplog.text
+
+
+def test_missing_tls_impersonation_is_a_warning_not_silence(monkeypatch, caplog):
+    """退回無偽裝的 requests 必須是 WARNING——這是會導致被封鎖的狀態。"""
+    from yfinance import _http as yf_http
+
+    from app.providers.market.yf_cache import log_http_backend
+
+    monkeypatch.setattr(yf_http, "HAS_CURL_CFFI", False)
+    with caplog.at_level("INFO", logger="app.providers.market.yf_cache"):
+        assert log_http_backend() is False
+
+    warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+    assert warnings and "TLS" in warnings[0].getMessage()
+
+
 def test_failure_to_configure_never_breaks_startup(monkeypatch):
     """快取只是加速；拿不到就退回每次查詢，不能讓服務起不來。"""
 

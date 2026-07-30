@@ -1,8 +1,9 @@
 """盤中即時報價（僅供出場哨兵使用，量小、免 key）。
 
 台股：證交所 mis.twse.com.tw 官方即時端點（上市 tse_ 與上櫃 otc_ 一次並查）
-美股：yfinance fast_info（延遲報價，對小時級哨兵足夠）
-抓不到的標的直接略過（回傳字典缺鍵），哨兵端視為「本輪不檢查」。
+美股：Finnhub 為主（API key 辨識，機房 IP 可用），yfinance 為備援
+抓不到的標的直接略過（回傳字典缺鍵），哨兵端視為「本輪不檢查」；
+若一檔都取不到，哨兵會讓該輪算失敗（見 sim/sentinel），不再靜默跳過。
 """
 import asyncio
 import logging
@@ -69,6 +70,22 @@ def _parse_price(raw: str | None) -> float | None:
 
 
 async def _us_quotes(symbols: list[str]) -> dict[str, float]:
+    """Finnhub 為主、yfinance 為備援。
+
+    主從順序是刻意的：Yahoo 以 IP 信譽封鎖機房來源，正式環境曾整批取不到
+    報價、停損完全失效；Finnhub 以 API key 辨識呼叫者，不看 IP。
+    未設定 FINNHUB_TOKEN 時 fetch_quotes 回空字典，等於全數走 yfinance。
+    """
+    from app.providers.market import finnhub
+
+    quotes = await finnhub.fetch_quotes(symbols)
+    missing = [s for s in symbols if s not in quotes]
+    if missing:
+        quotes.update(await _us_quotes_via_yfinance(missing))
+    return quotes
+
+
+async def _us_quotes_via_yfinance(symbols: list[str]) -> dict[str, float]:
     import yfinance as yf
 
     from app.providers.market.yf_cache import yfinance_guard
