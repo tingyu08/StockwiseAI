@@ -49,7 +49,7 @@ DONE = {"id": "job-1", "status": "completed"}
 
 
 async def test_transient_403_is_retried_not_fatal(monkeypatch):
-    """偶發 403 之後應該繼續輪詢並拿到結果，而不是整檔放棄。"""
+    """單次 403 之後應該繼續輪詢並拿到結果，而不是整檔放棄。"""
     _client_factory(monkeypatch, [
         _Resp(403, text='{"error":{"code":"permission_denied"}}'),
         _Resp(200, DONE),
@@ -62,14 +62,18 @@ async def test_transient_403_is_retried_not_fatal(monkeypatch):
     assert result["status"] == "completed"
 
 
-async def test_persistent_403_still_fails(monkeypatch):
-    """真的沒權限時不能無止盡重試，超過上限就放棄。"""
+async def test_persistent_403_is_reported_as_unreadable_interaction(monkeypatch):
+    """持續 403 要用專屬例外回報，呼叫端才知道該「重建任務」而非重試同一個 id。
+
+    正式環境實測：同一個 interaction 連續 4 次、跨 21 秒全部 403，
+    而同一輪其他 interaction 皆正常——重試同一個 id 沒有意義。
+    """
     _client_factory(monkeypatch, [
         _Resp(403, text="denied") for _ in range(antigravity.POLL_FORBIDDEN_RETRIES + 1)
     ])
     db = SessionLocal()
     try:
-        with pytest.raises(UpstreamError) as exc:
+        with pytest.raises(antigravity._InteractionUnreadable) as exc:
             await AntigravityProvider(db)._wait({"id": "job-1", "status": "in_progress"})
     finally:
         db.close()
