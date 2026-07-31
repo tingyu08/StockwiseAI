@@ -48,17 +48,17 @@ it("資料日期與排程執行時間分開顯示", async () => {
 
 it("時間戳以 UTC 解讀而非當地時間", async () => {
   const { formatRunTime } = await import("@/lib/datetime");
-  const utc = "2026-07-10T22:40:00Z";
-  const expected = new Date(utc);
-  const pad = (n: number) => String(n).padStart(2, "0");
 
-  expect(formatRunTime(utc)).toBe(
-    `${pad(expected.getMonth() + 1)}/${pad(expected.getDate())} ${pad(
-      expected.getHours(),
-    )}:${pad(expected.getMinutes())}`,
-  );
-  // 沒有 Z 的字串會被當成當地時間 → 兩者必須不同，這就是加 Z 的理由
-  expect(formatRunTime("2026-07-10T22:40:00")).not.toBe(formatRunTime(utc));
+  // 這條測試的前提：執行環境為 Asia/Taipei（由 vitest.config 釘死）。
+  // 在 UTC 下「有無 Z」指向同一時刻，就驗不出時區誤判——CI 曾因此失敗。
+  expect(new Date("2026-07-10T00:00:00Z").getTimezoneOffset()).toBe(-480);
+
+  // 帶 Z ⇒ UTC 22:40 ⇒ 台北 07/11 06:40
+  expect(formatRunTime("2026-07-10T22:40:00Z")).toBe("07/11 06:40");
+  // 沒有 Z ⇒ 被當成當地時間 ⇒ 07/10 22:40。整整差 8 小時，
+  // 這就是後端必須用 as_utc_iso() 補上 Z 的理由。
+  expect(formatRunTime("2026-07-10T22:40:00")).toBe("07/10 22:40");
+
   expect(formatRunTime(null)).toBeNull();
   expect(formatRunTime("not-a-date")).toBeNull();
 });
