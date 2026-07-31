@@ -2,6 +2,7 @@
 
 import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import { useRunRoutine } from "@/hooks/use-analysis";
+import { formatRunTime } from "@/lib/datetime";
 import type { AnalysisData } from "@/lib/types";
 
 const ACTION_STYLE: Record<string, { label: string; cls: string }> = {
@@ -111,7 +112,8 @@ function ReportBody({ data }: { data: AnalysisData }) {
       </div>
 
       <p className="text-xs text-neutral-400">
-        {data.trade_date}｜{data.kind === "deep" ? "深度分析" : "例行分析"}｜{data.model}
+        {formatRunTime(data.created_at) ?? "尚未執行"} 產生｜
+        {data.kind === "deep" ? "深度分析" : "例行分析"}｜{data.model}
       </p>
     </div>
   );

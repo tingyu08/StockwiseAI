@@ -2,6 +2,7 @@
 
 import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import { useOverview, useRunOverview, type DailyBriefing } from "@/hooks/use-groups";
+import { formatRunTime } from "@/lib/datetime";
 import { ApiError } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
 
@@ -53,7 +54,14 @@ export function OverviewCard() {
       )}
       {run.isError && <p className="text-sm text-red-500">{(run.error as Error).message}</p>}
 
-      {data && <BriefingBody briefing={data.report} meta={`${data.trade_date}｜${data.model}`} />}
+      {/* 顯示「產生時間」而非 trade_date：後者是簡報所根據的收盤日，
+          並排在畫面上會讓人誤以為排程停在那一天 */}
+      {data && (
+        <BriefingBody
+          briefing={data.report}
+          meta={`${formatRunTime(data.created_at) ?? "尚未執行"} 產生｜${data.model}`}
+        />
+      )}
 
       <FreshnessNote>{FRESHNESS.overview}</FreshnessNote>
     </section>

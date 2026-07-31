@@ -75,11 +75,11 @@ def test_data_status_reports_market_freshness(client):
         assert set(data[market]) == {
             "latest_price_date",
             "latest_nav_date",
-            "latest_ai_date",
-            "latest_ai_dates",
+            "latest_ai_runs",
+            "latest_overview_run",
             "latest_successful_job",
         }
-        assert set(data[market]["latest_ai_dates"]) == {"news", "routine", "trade"}
+        assert set(data[market]["latest_ai_runs"]) == {"news", "routine", "trade"}
 
 
 def test_data_status_hides_nav_for_markets_without_premium_support(client):

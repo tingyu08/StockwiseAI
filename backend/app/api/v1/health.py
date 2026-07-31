@@ -6,8 +6,9 @@ from sqlalchemy.orm import Session
 from app.core.db import get_db
 from app.core.envelope import Envelope, ok
 from app.core.exceptions import AppError
-from app.models import AiReport, DailyPrice, EtfNav, JobRun, Stock
+from app.models import AiOverview, AiReport, DailyPrice, EtfNav, JobRun, Stock
 from app.services.premium_service import SUPPORTED_MARKETS as PREMIUM_MARKETS
+from app.services.time_service import as_utc_iso
 
 router = APIRouter(tags=["health"])
 
@@ -57,14 +58,17 @@ def data_status(db: Session = Depends(get_db)) -> Envelope:
             if market in PREMIUM_MARKETS
             else None
         )
+        # 取「最後產生時間」而非 trade_date。trade_date 是這份分析所根據的
+        # 收盤日，美股資料鏈天生落後一個 session，於是畫面上會出現
+        # 「例行 07-24」但工作其實是 07-27 跑的——看起來像排程停擺。
+        # 使用者要看的是「上次跑是什麼時候」，那是 created_at。
         ai_rows = db.execute(
-            select(AiReport.kind, func.max(AiReport.trade_date))
+            select(AiReport.kind, func.max(AiReport.created_at))
             .join(Stock, AiReport.stock_id == Stock.id)
             .where(Stock.market == market)
             .group_by(AiReport.kind)
         ).all()
-        ai_dates = {kind: trade_date for kind, trade_date in ai_rows}
-        latest_ai = max(ai_dates.values(), default=None)
+        ai_runs = {kind: ran_at for kind, ran_at in ai_rows}
         latest_job = db.execute(
             select(JobRun)
             .where(
@@ -74,20 +78,24 @@ def data_status(db: Session = Depends(get_db)) -> Envelope:
             .order_by(JobRun.finished_at.desc(), JobRun.id.desc())
             .limit(1)
         ).scalar_one_or_none()
+        overview_run = db.execute(
+            select(func.max(AiOverview.created_at)).where(AiOverview.market == market)
+        ).scalar_one_or_none()
         result[market] = {
+            # 行情/NAV 仍是資料日期：它們回答「我手上的資料到哪一天」，
+            # 換成「同步幾點跑的」反而失去意義（答案永遠是今天）。
             "latest_price_date": latest_price.isoformat() if latest_price else None,
             "latest_nav_date": latest_nav.isoformat() if latest_nav else None,
-            "latest_ai_date": latest_ai.isoformat() if latest_ai else None,
-            "latest_ai_dates": {
-                kind: ai_dates[kind].isoformat() if kind in ai_dates else None
+            # 以下皆為「上次執行時間」（UTC，帶時區標記供前端轉當地時間）
+            "latest_ai_runs": {
+                kind: as_utc_iso(ai_runs.get(kind))
                 for kind in ("news", "routine", "trade")
             },
+            "latest_overview_run": as_utc_iso(overview_run),
             "latest_successful_job": {
                 "id": latest_job.id,
                 "name": latest_job.name,
-                "finished_at": latest_job.finished_at.isoformat()
-                if latest_job.finished_at
-                else None,
+                "finished_at": as_utc_iso(latest_job.finished_at),
             }
             if latest_job
             else None,
