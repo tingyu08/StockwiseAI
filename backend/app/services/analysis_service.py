@@ -17,7 +17,7 @@ from app.models import AiReport, DailyPrice, Indicator, Stock
 from app.providers.ai import router as ai_router
 from app.providers.ai.base import AnalysisContext
 from app.providers.ai.gemini import PROMPT_VERSION
-from app.services.time_service import market_today
+from app.services.time_service import as_utc_iso, market_today
 
 if TYPE_CHECKING:
     from app.models import AiOverview
@@ -124,16 +124,29 @@ async def run_batch(
     if trade_dates is None:
         trade_dates = _last_trade_dates(db, stocks)
     pending: list[tuple[Stock, AnalysisContext, str]] = []
+    insufficient: list[str] = []
     for stock in stocks:
         trade_date = trade_dates.get(stock.id)
         if trade_date is None:
             continue
-        context = await build_context(db, stock)
+        try:
+            context = await build_context(db, stock)
+        except NotFoundError as exc:
+            # 一檔資料不足不得炸掉整批。正式環境實際發生過：自選清單裡一檔
+            # 新上市的主動式 ETF（日線不足 30 筆）讓「每日投資簡報」連續
+            # 數日完全產不出來——簡報取的是整份自選清單（不像例行批次只取
+            # AI 託管），更容易混進這種還沒累積夠歷史的標的。
+            logger.warning("批次分析跳過 %s：%s", stock.symbol, exc.message)
+            insufficient.append(stock.symbol)
+            continue
         input_hash = analysis_input_hash(context, kind)
         if not _report_exists(db, stock.id, trade_date, kind, input_hash):
             pending.append((stock, context, input_hash))
     if not pending:
-        return {"analyzed": 0, "skipped": len(stocks), "model": None}
+        return {
+            "analyzed": 0, "skipped": len(stocks),
+            "model": None, "insufficient": insufficient,
+        }
 
     analyzed = 0
     model_used = None
@@ -171,7 +184,10 @@ async def run_batch(
                 )
             )
         analyzed += _insert_reports(db, rows)
-    return {"analyzed": analyzed, "skipped": len(stocks) - len(pending), "model": model_used}
+    return {
+        "analyzed": analyzed, "skipped": len(stocks) - len(pending),
+        "model": model_used, "insufficient": insufficient,
+    }
 
 
 def _insert_reports(db: Session, rows: list[dict]) -> int:
@@ -374,7 +390,7 @@ def overview_dto(overview) -> dict:
         "trade_date": overview.trade_date.isoformat(),
         "model": overview.model,
         "report": json.loads(overview.payload_json),
-        "created_at": overview.created_at.isoformat() if overview.created_at else None,
+        "created_at": as_utc_iso(overview.created_at),
     }
 
 
@@ -385,7 +401,7 @@ def report_dto(report: AiReport) -> dict:
         "model": report.model,
         "prompt_version": report.prompt_version,
         "report": json.loads(report.payload_json),
-        "created_at": report.created_at.isoformat() if report.created_at else None,
+        "created_at": as_utc_iso(report.created_at),
     }
 
 

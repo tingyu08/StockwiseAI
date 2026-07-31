@@ -83,9 +83,13 @@ async def run_routine(
 ) -> Envelope:
     """單檔例行分析（走 flash-lite 降級鏈，含當日快取）。"""
     stock = _get_stock(db, market, symbol)
-    await analysis_service.run_batch(db, [stock], kind="routine")
+    result = await analysis_service.run_batch(db, [stock], kind="routine")
     report = analysis_service.latest_report(db, stock, kinds=("routine",))
     if report is None:
+        # run_batch 現在會跳過資料不足的標的（避免一檔炸掉整批），單檔請求
+        # 若被跳過必須回傳真正的原因，不能含糊成「請稍後再試」
+        if result.get("insufficient"):
+            raise NotFoundError(f"{stock.symbol} 價格資料不足（<30 筆），請先同步")
         raise NotFoundError("分析未產生結果，請稍後再試")
     return ok(analysis_service.report_dto(report))
 
