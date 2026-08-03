@@ -6,6 +6,8 @@
 
 拆開的附帶好處：出處是我們給的，AI 沒有機會虛構來源。
 """
+from datetime import date
+
 import httpx
 import pytest
 
@@ -28,7 +30,7 @@ class _Resp:
 
 
 def _patch_client(monkeypatch, by_host):
-    """by_host: 網址片段 -> _Resp 或例外。"""
+    """by_host: 網址片段 -> _Resp 或例外。回傳 [(url, params)] 供斷言。"""
     seen = []
 
     class Client:
@@ -39,7 +41,7 @@ def _patch_client(monkeypatch, by_host):
             return None
 
         async def get(self, url, params=None, headers=None):
-            seen.append(url)
+            seen.append((url, params or {}))
             for fragment, outcome in by_host.items():
                 if fragment in url:
                     if isinstance(outcome, Exception):
@@ -88,7 +90,7 @@ async def test_tw_falls_back_to_rss_when_finmind_is_empty(monkeypatch):
 
     assert [i.source for i in items] == ["中央社"]
     assert items[0].published == "2026-08-03"
-    assert any("finmindtrade" in u for u in seen)  # 主來源有先試過
+    assert any("finmindtrade" in u for u, _ in seen)  # 主來源有先試過
 
 
 async def test_source_error_falls_through_instead_of_raising(monkeypatch):
@@ -135,7 +137,7 @@ async def test_us_without_token_skips_finnhub_and_uses_rss(monkeypatch):
     items = await news_feed.fetch_headlines("AAPL", "Apple", "US")
 
     assert len(items) == 1
-    assert not any("finnhub" in u for u in seen)
+    assert not any("finnhub" in u for u, _ in seen)
 
 
 # ---- 共同約束 ----
@@ -168,3 +170,36 @@ def test_rss_parsing_unescapes_and_handles_cdata():
     items = news_feed._parse_rss(xml)
     assert items[0].title == "台積電 & 聯電走揚"
     assert items[0].source == "鉅亨網"
+
+
+# ---- 日期：不得跟著伺服器本機時區跑 ----
+
+async def test_finnhub_epoch_is_converted_to_market_date_not_server_local(monkeypatch):
+    """Finnhub 的 datetime 是 UTC epoch。本機（台灣）與 Zeabur（UTC）用
+    date.fromtimestamp() 會得到不同日期——一律換算成市場當地日期。"""
+    monkeypatch.setattr(get_settings(), "finnhub_token", "test-token")
+    # 2026-08-04 01:30 UTC = 2026-08-03 21:30 美東 → 對美股是 8/3 的新聞
+    _patch_client(monkeypatch, {"finnhub.io": _Resp(200, [
+        {"headline": "After-hours guidance cut", "source": "Reuters",
+         "url": "https://reuters.example/a", "datetime": 1785807000},
+    ])})
+
+    items = await news_feed.fetch_headlines("AAPL", "Apple", "US")
+
+    assert items[0].published == "2026-08-03"
+
+
+async def test_request_matches_the_documented_finnhub_contract(monkeypatch):
+    """官方 spec：symbol / from / to 皆必填，日期格式 YYYY-MM-DD。"""
+    monkeypatch.setattr(get_settings(), "finnhub_token", "test-token")
+    seen = _patch_client(monkeypatch, {"finnhub.io": _Resp(200, [])})
+
+    await news_feed.fetch_headlines("AAPL", "Apple", "US")
+
+    _, params = next((u, p) for u, p in seen if "finnhub" in u)
+    assert set(params) >= {"symbol", "from", "to", "token"}
+    assert params["symbol"] == "AAPL"
+    for key in ("from", "to"):
+        date.fromisoformat(params[key])  # 格式不對會拋例外
+    span = date.fromisoformat(params["to"]) - date.fromisoformat(params["from"])
+    assert span.days == news_feed.LOOKBACK_DAYS

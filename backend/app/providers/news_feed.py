@@ -17,12 +17,13 @@ url_context 皆正常——所以把「找新聞」與「讀新聞」拆開：
 import logging
 import re
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from html import unescape
 
 import httpx
 
 from app.core.config import get_settings
+from app.services.time_service import market_date_from_utc, market_today
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +59,10 @@ async def fetch_headlines(symbol: str, name: str, market: str) -> list[NewsItem]
     return []
 
 
-def _since() -> date:
-    return date.today() - timedelta(days=LOOKBACK_DAYS)
+def _since(market: str) -> date:
+    """回看起點。用市場當地日期而非伺服器本機日期——Zeabur 跑 UTC，
+    date.today() 在台股清晨會少算一天。"""
+    return market_today(market) - timedelta(days=LOOKBACK_DAYS)
 
 
 async def _fetch_tw(symbol: str, name: str, market: str) -> list[NewsItem]:
@@ -67,7 +70,7 @@ async def _fetch_tw(symbol: str, name: str, market: str) -> list[NewsItem]:
     async with httpx.AsyncClient(timeout=TIMEOUT_SEC) as client:
         res = await client.get(FINMIND_URL, params={
             "dataset": "TaiwanStockNews", "data_id": symbol,
-            "start_date": _since().isoformat(), "token": token,
+            "start_date": _since(market).isoformat(), "token": token,
         })
     res.raise_for_status()
     rows = res.json().get("data") or []
@@ -93,8 +96,8 @@ async def _fetch_us(symbol: str, name: str, market: str) -> list[NewsItem]:
         return []  # 未設定就直接讓位給 RSS 備援
     async with httpx.AsyncClient(timeout=TIMEOUT_SEC) as client:
         res = await client.get(FINNHUB_NEWS_URL, params={
-            "symbol": symbol, "from": _since().isoformat(),
-            "to": date.today().isoformat(), "token": token,
+            "symbol": symbol, "from": _since(market).isoformat(),
+            "to": market_today(market).isoformat(), "token": token,
         })
     res.raise_for_status()
     rows = res.json() or []
@@ -105,12 +108,22 @@ async def _fetch_us(symbol: str, name: str, market: str) -> list[NewsItem]:
             continue
         stamp = row.get("datetime")
         items.append(NewsItem(
-            published=date.fromtimestamp(stamp).isoformat() if stamp else "",
+            published=_epoch_to_market_date(stamp, market),
             title=headline,
             source=str(row.get("source") or "Finnhub").strip(),
             url=str(row.get("url") or "").strip(),
         ))
     return items
+
+
+def _epoch_to_market_date(stamp, market: str) -> str:
+    """Finnhub 的 datetime 是 UTC epoch。用 date.fromtimestamp() 會跟著
+    伺服器本機時區跑（本機台灣、Zeabur UTC 會得到不同日期），一律換算成
+    市場當地日期。"""
+    if not stamp:
+        return ""
+    moment = datetime.fromtimestamp(int(stamp), tz=timezone.utc)
+    return market_date_from_utc(moment, market).isoformat()
 
 
 async def _fetch_google_news(symbol: str, name: str, market: str) -> list[NewsItem]:
