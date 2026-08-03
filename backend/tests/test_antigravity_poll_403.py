@@ -73,7 +73,7 @@ async def test_persistent_403_is_reported_as_unreadable_interaction(monkeypatch)
     ])
     db = SessionLocal()
     try:
-        with pytest.raises(antigravity._InteractionUnreadable) as exc:
+        with pytest.raises(antigravity.InteractionUnreadableError) as exc:
             await AntigravityProvider(db)._wait({"id": "job-1", "status": "in_progress"})
     finally:
         db.close()

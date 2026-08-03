@@ -45,7 +45,7 @@ async def test_unreadable_interaction_triggers_a_brand_new_task(monkeypatch):
     db = SessionLocal()
     try:
         attempts = _patch_tasks(monkeypatch, [
-            antigravity._InteractionUnreadable("讀不到（403，等待 21s）"),
+            antigravity.InteractionUnreadableError("讀不到（403，等待 21s）"),
             _completed("台積電法說會偏多"),
         ])
 
@@ -63,11 +63,11 @@ async def test_gives_up_after_the_attempt_budget(monkeypatch):
     db = SessionLocal()
     try:
         attempts = _patch_tasks(monkeypatch, [
-            antigravity._InteractionUnreadable("讀不到（403）")
+            antigravity.InteractionUnreadableError("讀不到（403）")
             for _ in range(antigravity.TASK_ATTEMPTS)
         ])
 
-        with pytest.raises(antigravity._InteractionUnreadable):
+        with pytest.raises(antigravity.InteractionUnreadableError):
             await AntigravityProvider(db).research_news("2330", "台積電", "TW")
 
         assert len(attempts) == antigravity.TASK_ATTEMPTS
@@ -134,7 +134,7 @@ async def test_retry_reserves_its_own_quota(monkeypatch):
 
         async def fake_wait(self, interaction):
             if interaction["id"] == "job-1":
-                raise antigravity._InteractionUnreadable("讀不到（403）")
+                raise antigravity.InteractionUnreadableError("讀不到（403）")
             return _completed()
 
         monkeypatch.setattr(AntigravityProvider, "_create", fake_create)

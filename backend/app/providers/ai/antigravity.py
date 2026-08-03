@@ -59,11 +59,12 @@ class _RequestNotSent(UpstreamError):
     """任務未送達上游（連線層失敗）——呼叫端應釋放額度預約而非計為用量。"""
 
 
-class _InteractionUnreadable(UpstreamError):
-    """任務已建立，但它的 interaction 持續讀不到（403/404）。
+class InteractionUnreadableError(UpstreamError):
+    """任務已建立，但它的 interaction 持續讀不到（403 permission_denied）。
 
-    與一般 UpstreamError 分開，是因為處置方式不同：重試同一個 id 無效，
-    唯一有機會救回的是「丟掉它、建立一個新任務」。
+    與一般 UpstreamError 分開，是因為處置方式不同：重試同一個 id 無效。
+    隔離發生時重建一個新任務還有機會救回；但**連續**發生就是上游異常，
+    呼叫端必須整輪收工而不是逐檔重建（見 jobs.NEWS_UNREADABLE_STREAK_LIMIT）。
     """
 
 
@@ -86,7 +87,7 @@ class AntigravityProvider:
         for attempt in range(1, TASK_ATTEMPTS + 1):
             try:
                 interaction = await self._run_task(prompt)
-            except _InteractionUnreadable as exc:
+            except InteractionUnreadableError as exc:
                 if attempt >= TASK_ATTEMPTS:
                     raise
                 logger.warning(
@@ -258,7 +259,7 @@ class AntigravityProvider:
                         "視為不可讀取，交由呼叫端重建任務",
                         interaction_id, res.status_code, forbidden_seen, waited,
                     )
-                    raise _InteractionUnreadable(
+                    raise InteractionUnreadableError(
                         f"Antigravity interaction 讀不到（{res.status_code}，等待 {waited}s）"
                     )
                 if res.status_code != 200:
