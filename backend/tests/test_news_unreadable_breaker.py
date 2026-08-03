@@ -23,6 +23,14 @@ def _trading_day_and_no_waiting(monkeypatch):
     monkeypatch.setattr("app.scheduler.jobs.is_trading_day", lambda m, d: True)
     monkeypatch.setattr("app.scheduler.jobs.NEWS_QUOTA_WAIT_SEC", 0)
 
+    # 熔斷時會去查可用 agent 清單——測試不該真的打上游
+    async def stub_diagnosis():
+        return "（測試用診斷）"
+
+    monkeypatch.setattr(
+        "app.providers.ai.antigravity.agent_access_diagnosis", stub_diagnosis
+    )
+
 
 @pytest.fixture(autouse=True)
 def _only_this_test_is_ai_managed():
@@ -158,5 +166,53 @@ async def test_quota_stop_still_works_alongside_the_breaker(client, monkeypatch)
         assert result["quota_stopped"] == "今日免費額度已用盡"
         assert result["upstream_stopped"] is None
         assert set(result["skipped"]) == {"QTA01", "QTA02"}
+    finally:
+        db.close()
+
+
+# ---- 熔斷時要說出「該去哪裡修」 ----
+
+async def test_breaker_reports_why_not_just_403(client, monkeypatch):
+    """403 本身看不出原因。熔斷時查一次可用 agent 清單，讓 log 直接可行動。
+
+    實測（本機與雲端皆同）：POST /interactions 成功、任何讀取結果的呼叫皆
+    403，而 /v1beta/agents 回傳空清單——「能建立、不能讀取」。
+    """
+    async def empty_agents():
+        return "本帳號目前沒有任何可用的 agent（/v1beta/agents 回傳空清單）"
+
+    monkeypatch.setattr(
+        "app.providers.ai.antigravity.agent_access_diagnosis", empty_agents
+    )
+    db = SessionLocal()
+    try:
+        _seed(db, ["DIA01", "DIA02"])
+        _patch(monkeypatch, {"DIA01": UNREADABLE, "DIA02": UNREADABLE})
+
+        result = await jobs.news_research_daily("TW")
+
+        assert "沒有任何可用的 agent" in result["upstream_stopped"]
+    finally:
+        db.close()
+
+
+async def test_diagnosis_failure_does_not_break_the_job(client, monkeypatch):
+    """診斷只是附加資訊——查不到也不能讓工作本身壞掉。"""
+    async def boom():
+        raise RuntimeError("agents endpoint down")
+
+    monkeypatch.setattr(
+        "app.providers.ai.antigravity.agent_access_diagnosis", boom
+    )
+    db = SessionLocal()
+    try:
+        _seed(db, ["DIB01", "DIB02"])
+        _patch(monkeypatch, {"DIB01": UNREADABLE, "DIB02": UNREADABLE})
+
+        result = await jobs.news_research_daily("TW")
+
+        # 熔斷本身仍要成立，只是附帶診斷降級
+        assert "上游異常" in result["upstream_stopped"]
+        assert "診斷查詢失敗" in result["upstream_stopped"]
     finally:
         db.close()

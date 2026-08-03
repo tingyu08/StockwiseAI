@@ -157,7 +157,10 @@ async def news_research_daily(market: str) -> dict:
     import asyncio
 
     from app.core.exceptions import QuotaExceededError
-    from app.providers.ai.antigravity import InteractionUnreadableError
+    from app.providers.ai.antigravity import (
+        InteractionUnreadableError,
+        agent_access_diagnosis,
+    )
     from app.services.news_service import run_news_research
 
     db = SessionLocal()
@@ -186,9 +189,17 @@ async def news_research_daily(market: str) -> dict:
                     unreadable_streak += 1
                     failed.append(stock.symbol)
                     if unreadable_streak >= NEWS_UNREADABLE_STREAK_LIMIT:
+                        # 光看 403 看不出原因，順手查一次可用 agent 清單，
+                        # 讓 log 直接說出「該去哪裡修」而不是留一堆權限錯誤。
+                        # 診斷只是附加資訊，壞掉不能連帶讓工作失敗。
+                        try:
+                            diagnosis = await agent_access_diagnosis()
+                        except Exception:  # noqa: BLE001
+                            logger.warning("查詢可用 agent 失敗", exc_info=True)
+                            diagnosis = "（附帶診斷查詢失敗）"
                         upstream_stopped = (
                             f"連續 {unreadable_streak} 檔的 interaction 都讀不到"
-                            f"（{exc.message}），判定為 Antigravity 上游異常"
+                            f"（{exc.message}），判定為 Antigravity 上游異常。{diagnosis}"
                         )
                         logger.error(
                             "%s 新聞研究中止：%s。已完成 %d/%d 檔",

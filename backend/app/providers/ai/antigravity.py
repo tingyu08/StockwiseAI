@@ -68,6 +68,38 @@ class InteractionUnreadableError(UpstreamError):
     """
 
 
+AGENTS_URL = "https://generativelanguage.googleapis.com/v1beta/agents"
+
+
+async def agent_access_diagnosis() -> str:
+    """為什麼 interaction 讀不到？回傳一句可行動的說明。
+
+    實測（本機與雲端皆同）：POST /interactions 會成功建立任務，但任何會回傳
+    執行結果的呼叫（GET、或不帶 background 的同步 POST）一律 403
+    permission_denied，而 GET /v1beta/agents 回傳空清單——也就是這把金鑰
+    「能建立、不能讀取」。光看 403 完全看不出這件事，故在熔斷時查一次。
+
+    這個 GET 不建立 interaction、不佔 RPD，只在已經失敗時呼叫。
+    """
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            res = await client.get(
+                AGENTS_URL, headers={"x-goog-api-key": get_settings().gemini_api_key}
+            )
+        if res.status_code != 200:
+            return f"無法查詢可用 agent（HTTP {res.status_code}）"
+        agents = res.json().get("agents") or []
+    except Exception:
+        return "無法查詢可用 agent（連線失敗）"
+    if not agents:
+        return (
+            "本帳號目前沒有任何可用的 agent（/v1beta/agents 回傳空清單）——"
+            "Antigravity 存取權需在 Google 端恢復，不是程式可以修的"
+        )
+    names = ", ".join(str(a.get("name") or a) for a in agents[:5])
+    return f"帳號可用的 agent：{names}（目前設定為 {AGENT_ID}）"
+
+
 class AntigravityProvider:
     provider_name = "antigravity"
     model_name = AGENT_ID
