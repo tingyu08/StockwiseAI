@@ -1,7 +1,7 @@
 """新聞研究排程的額度處理：分鐘級限流不得被當成「今日額度用盡」。
 
-正式環境每天早上都會發生：Antigravity 單檔約 34K tokens、TPM 上限 100K，
-agent 任務跑得快時三檔擠進同一個滾動分鐘就被本地 rate limiter 擋下。
+正式環境每天早上都會發生：單檔新聞研究的 token 量偏大，數檔擠進同一個
+滾動分鐘就會被本地 rate limiter 的 TPM 防線擋下。
 舊版把所有 QuotaExceededError 都當成今日用盡而 break，清單順序固定，
 等於後段的股票永遠拿不到新聞研究（RPD 100 其實只用掉個位數）。
 """
@@ -133,7 +133,7 @@ async def test_upstream_429_stops_early(client, monkeypatch):
     try:
         _seed_managed(db, ["QS4291", "QS4292"])
         calls = _patch_research(monkeypatch, {
-            "QS4291": QuotaExceededError("Antigravity 被 Google 端限流（429）",
+            "QS4291": QuotaExceededError("上游限流（429）",
                                        scope="upstream"),
         })
 

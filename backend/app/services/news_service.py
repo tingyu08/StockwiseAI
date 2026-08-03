@@ -1,9 +1,12 @@
-"""新聞面研究：Antigravity 每日搜尋個股新聞 → 摘要落地 → 餵給主分析管線。
+"""新聞面研究：抓真實新聞清單 → AI 摘要落地 → 餵給主分析管線。
 
 - 存於 ai_reports（kind='news'），以「日曆日」為快取鍵——新聞跟今天有關，
   與交易日無關（週末/盤前也能跑），DB 唯一約束保證同日不重跑
-- 摘要為自由文字（Antigravity 不支援 structured output），
-  只作為 Gemini 主管線的 news_summary 輸入，不直接驅動下單
+- 摘要只作為 Gemini 主管線的 news_summary 輸入，不直接驅動下單
+
+「找新聞」與「摘要新聞」是分開的（見 providers/news_feed）：Google 的搜尋
+接地與 Antigravity agent 都因帳號資格問題不可用，但純文字生成完全正常。
+拆開之後 AI 也無法虛構出處——網址是我們給它的。
 """
 import json
 import logging
@@ -14,7 +17,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models import AiReport, Stock
-from app.providers.ai.antigravity import AntigravityProvider
+from app.providers import news_feed
+from app.providers.ai import router as ai_router
+from app.providers.ai.schemas import NewsBrief
 from app.services.time_service import market_today
 
 logger = logging.getLogger(__name__)
@@ -31,19 +36,25 @@ async def run_news_research(
     if existing and not force:
         return existing
 
-    provider = AntigravityProvider(db)
-    summary = (
-        await provider.research_news(stock.symbol, stock.name, stock.market)
-    ).strip()[:2000]
+    items = await news_feed.fetch_headlines(stock.symbol, stock.name, stock.market)
+    if items:
+        brief, model = await ai_router.generate_structured(
+            db, _summary_prompt(stock, items), NewsBrief
+        )
+        summary = _render(brief)[:2000]
+    else:
+        # 沒有新聞就如實記錄，不要為了產出而叫 AI 生一段話
+        summary, model = "近 7 天無重大新聞", "none"
+        logger.info("新聞研究 %s：來源皆無資料", stock.symbol)
 
     if existing is None:
         row = AiReport(stock_id=stock.id, trade_date=today, kind="news")
         db.add(row)
     else:
         row = existing
-    row.provider = provider.provider_name
-    row.model = provider.model_name
-    row.prompt_version = "news-v2"
+    row.provider = "gemini"
+    row.model = model
+    row.prompt_version = "news-v3"
     row.input_hash = ""
     row.action = None
     row.confidence = None
@@ -86,6 +97,33 @@ def news_dto(report: AiReport) -> dict:
         "summary": json.loads(report.payload_json).get("summary", ""),
         "created_at": report.created_at.isoformat() if report.created_at else None,
     }
+
+
+def _summary_prompt(stock: Stock, items: list[news_feed.NewsItem]) -> str:
+    lines = "\n".join(
+        f"- {i.published}｜{i.title}（{i.source}｜{i.url}）" for i in items
+    )
+    return f"""以下是「{stock.name}（{stock.market} {stock.symbol}）」近 7 天的新聞標題，
+由系統抓取，全部附有出處：
+
+{lines}
+
+請據此產出新聞面研究：
+- tone：整體基調（偏多／偏空／中性）
+- tone_reason：一句話說明理由
+- highlights：挑出 2~5 則最重要的，date 用 MM/DD，summary 一句話，
+  source 與 url 必須原封不動沿用上方提供的值
+
+只根據上方清單判斷，不要加入清單以外的資訊，也不要給投資建議。"""
+
+
+def _render(brief: NewsBrief) -> str:
+    """轉成與舊版相同的純文字格式，下游（分析管線、前端）不需改動。"""
+    lines = [f"{brief.tone}——{brief.tone_reason}"]
+    lines += [
+        f"{h.date} {h.summary}（{h.source}｜{h.url}）" for h in brief.highlights
+    ]
+    return "\n".join(lines)
 
 
 def _get_report(db: Session, stock_id: int, since: date) -> AiReport | None:

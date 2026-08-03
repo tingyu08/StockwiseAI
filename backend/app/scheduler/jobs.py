@@ -127,47 +127,28 @@ async def overview_daily(market: str) -> dict:
 # 這跟「今日額度用盡」是完全不同的事。
 NEWS_QUOTA_WAIT_SEC = 20
 NEWS_QUOTA_RETRIES = 3
-# 連續幾檔「interaction 讀不到」就判定為上游異常、整輪收工。
-#
-# 為什麼需要熔斷：單檔讀不到時我們會重建一個新任務再試，那對零星故障有效，
-# 但代價是每檔失敗要 2 個 interaction、約 45 秒。正式環境 08/03 出現整批
-# 都讀不到的情況，於是變成 12 檔 × 45 秒 ≈ 9 分鐘的死亡行軍並燒掉 24 次
-# RPD——而重建出來的新任務同樣 403，一次都沒救回來。
-#
-# 設 2 而非 1：維持「零星一檔壞掉不影響其他檔」的既有行為（那是常態），
-# 只有連續兩檔都連重建都失敗才視為系統性問題。
-NEWS_UNREADABLE_STREAK_LIMIT = 2
 
 
 async def news_research_daily(market: str) -> dict:
-    """AI 託管清單的每日新聞研究（Antigravity），於例行批次分析前執行。
+    """AI 託管清單的每日新聞研究，於例行批次分析前執行。
 
-    單檔失敗不中斷（agent 任務較不穩定）。額度處理分兩種：
+    單檔失敗不中斷。額度處理分兩種：
     - RPM/TPM（分鐘級視窗滿了）→ 等待後重試同一檔，不放棄後面的股票
     - RPD／上游 429（今日沒了）→ 提前收工，已完成的摘要仍會被當日批次分析吃到
 
     兩者若不分辨，分鐘級限流會被誤當成今日用盡：清單順序固定，
     等於後段的股票永遠拿不到新聞研究。
-
-    另有一道熔斷：連續數檔的 interaction 都讀不到即整輪中止
-    （見 NEWS_UNREADABLE_STREAK_LIMIT）。
     """
     if gate := _non_trading_gate(market):
         return gate
     import asyncio
 
     from app.core.exceptions import QuotaExceededError
-    from app.providers.ai.antigravity import (
-        InteractionUnreadableError,
-        agent_access_diagnosis,
-    )
     from app.services.news_service import run_news_research
 
     db = SessionLocal()
     researched, failed, skipped = 0, [], []
     quota_stopped: str | None = None
-    upstream_stopped: str | None = None
-    unreadable_streak = 0
     try:
         stocks = db.execute(
             select(Stock)
@@ -175,42 +156,13 @@ async def news_research_daily(market: str) -> dict:
             .where(Stock.market == market, WatchlistItem.ai_managed.is_(True))
         ).scalars().all()
         for stock in stocks:
-            if quota_stopped or upstream_stopped:
+            if quota_stopped:
                 skipped.append(stock.symbol)
                 continue
             for attempt in range(1, NEWS_QUOTA_RETRIES + 1):
                 try:
                     await run_news_research(db, stock)
                     researched += 1
-                    unreadable_streak = 0
-                except InteractionUnreadableError as exc:
-                    # 連重建的新任務都讀不到。零星一檔照舊繼續，但連續發生
-                    # 就是上游異常——再逐檔重建只是白燒額度與時間。
-                    unreadable_streak += 1
-                    failed.append(stock.symbol)
-                    if unreadable_streak >= NEWS_UNREADABLE_STREAK_LIMIT:
-                        # 光看 403 看不出原因，順手查一次可用 agent 清單，
-                        # 讓 log 直接說出「該去哪裡修」而不是留一堆權限錯誤。
-                        # 診斷只是附加資訊，壞掉不能連帶讓工作失敗。
-                        try:
-                            diagnosis = await agent_access_diagnosis()
-                        except Exception:  # noqa: BLE001
-                            logger.warning("查詢可用 agent 失敗", exc_info=True)
-                            diagnosis = "（附帶診斷查詢失敗）"
-                        upstream_stopped = (
-                            f"連續 {unreadable_streak} 檔的 interaction 都讀不到"
-                            f"（{exc.message}），判定為 Antigravity 上游異常。{diagnosis}"
-                        )
-                        logger.error(
-                            "%s 新聞研究中止：%s。已完成 %d/%d 檔",
-                            market, upstream_stopped, researched, len(stocks),
-                        )
-                    else:
-                        logger.warning(
-                            "%s 新聞研究 %s 失敗（%s），繼續下一檔",
-                            market, stock.symbol, exc.message,
-                        )
-                    break
                 except QuotaExceededError as exc:
                     if exc.scope == "config":
                         # quotas.yaml 漏設模型，跟額度用盡是兩回事。
@@ -246,7 +198,6 @@ async def news_research_daily(market: str) -> dict:
             "market": market, "researched": researched,
             "failed": failed, "skipped": skipped,
             "quota_stopped": quota_stopped,
-            "upstream_stopped": upstream_stopped,
         }
     finally:
         db.close()  # Neon 紀律：job 結束即釋放連線

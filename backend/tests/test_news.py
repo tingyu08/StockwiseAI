@@ -1,8 +1,6 @@
-"""新聞面研究模組：快取、管線注入、API。Antigravity 呼叫一律 mock。"""
+"""新聞面研究模組：快取、管線注入、API。新聞來源與 AI 一律 mock。"""
 import json
 
-import pytest
-from types import SimpleNamespace
 from datetime import date, timedelta
 
 from app.core.db import SessionLocal
@@ -10,10 +8,49 @@ from app.models import AiReport, DailyPrice, Indicator, Stock
 from app.services import news_service
 
 
-def test_news_prompt_requires_traceable_source_urls():
-    from app.providers.ai.antigravity import NEWS_PROMPT_TEMPLATE
+def _patch_news(monkeypatch, tone="偏多", items=None):
+    """攔截「抓新聞」與「AI 摘要」兩段，回傳被查詢過的代號清單。"""
+    from app.providers.ai.schemas import NewsBrief, NewsHighlight
+    from app.providers.news_feed import NewsItem
 
-    assert "URL" in NEWS_PROMPT_TEMPLATE
+    calls = []
+    feed = items if items is not None else [
+        NewsItem(published="2026-08-01", title="測試事件",
+                 source="測試媒體", url="https://example.com/a")
+    ]
+
+    async def fake_fetch(symbol, name, market):
+        calls.append(symbol)
+        return list(feed)
+
+    async def fake_generate(db, prompt, output_model):
+        return NewsBrief(
+            tone=tone, tone_reason="測試理由",
+            highlights=[NewsHighlight(date="08/01", summary="測試事件",
+                                      source="測試媒體",
+                                      url="https://example.com/a")],
+        ), "gemini-3.5-flash-lite"
+
+    monkeypatch.setattr("app.providers.news_feed.fetch_headlines", fake_fetch)
+    monkeypatch.setattr(
+        "app.providers.ai.router.generate_structured", fake_generate
+    )
+    return calls
+
+
+def test_prompt_forces_the_model_to_reuse_our_urls():
+    """出處必須沿用我們給的網址——AI 不再自己上網，也就不該自己生出處。"""
+    from app.providers.news_feed import NewsItem
+
+    stock = Stock(symbol="2330", market="TW", name="台積電",
+                  currency="TWD", kind="stock")
+    items = [NewsItem(published="2026-08-01", title="法說會優於預期",
+                      source="經濟日報", url="https://example.com/a")]
+    prompt = news_service._summary_prompt(stock, items)
+
+    assert "https://example.com/a" in prompt
+    assert "原封不動沿用" in prompt
+    assert "不要加入清單以外的資訊" in prompt
 
 
 def _seed_stock(db, symbol, market="TW", with_prices=False):
@@ -35,8 +72,8 @@ def _seed_news(db, stock, days_ago=0, summary="測試新聞摘要"):
     row = AiReport(
         stock_id=stock.id,
         trade_date=date.today() - timedelta(days=days_ago),
-        provider="antigravity",
-        model="antigravity-preview-05-2026",
+        provider="gemini",
+        model="gemini-3.5-flash-lite",
         prompt_version="news-v1",
         kind="news",
         payload_json=json.dumps({"summary": summary}, ensure_ascii=False),
@@ -48,15 +85,7 @@ def _seed_news(db, stock, days_ago=0, summary="測試新聞摘要"):
 
 async def test_news_research_daily_cache(monkeypatch):
     """當日已有 news 報告 → 不再呼叫 Antigravity。"""
-    calls = []
-
-    async def fake_research(self, symbol, name, market):
-        calls.append(symbol)
-        return "一句話總結：偏多。\n07/08 測試事件（測試媒體）"
-
-    monkeypatch.setattr(
-        "app.providers.ai.antigravity.AntigravityProvider.research_news", fake_research
-    )
+    calls = _patch_news(monkeypatch)
     db = SessionLocal()
     try:
         stock = _seed_stock(db, "7101")
@@ -116,12 +145,7 @@ def test_news_api_get_and_404(client):
 
 
 def test_news_api_run_triggers_research(client, monkeypatch):
-    async def fake_research(self, symbol, name, market):
-        return "手動觸發研究結果"
-
-    monkeypatch.setattr(
-        "app.providers.ai.antigravity.AntigravityProvider.research_news", fake_research
-    )
+    _patch_news(monkeypatch)
     db = SessionLocal()
     try:
         _seed_stock(db, "7107")
@@ -147,42 +171,21 @@ def test_news_api_run_triggers_research(client, monkeypatch):
 
 
 async def test_news_force_refresh_updates_same_daily_row(monkeypatch):
-    responses = iter(["第一版新聞", "第二版新聞"])
-
-    async def fake_research(self, symbol, name, market):
-        return next(responses)
-
-    monkeypatch.setattr(
-        "app.providers.ai.antigravity.AntigravityProvider.research_news", fake_research
-    )
+    """force 重跑要覆寫同一天那一列，而不是新增一列（DB 有唯一約束）。"""
+    _patch_news(monkeypatch, tone="偏多")
     db = SessionLocal()
     try:
         stock = _seed_stock(db, "7111")
         first = await news_service.run_news_research(db, stock)
         cached = await news_service.run_news_research(db, stock)
+
+        _patch_news(monkeypatch, tone="偏空")  # 第二版：基調不同
         refreshed = await news_service.run_news_research(db, stock, force=True)
 
         assert first.id == cached.id == refreshed.id
-        assert json.loads(refreshed.payload_json)["summary"] == "第二版新聞"
+        assert "偏空" in json.loads(refreshed.payload_json)["summary"]
     finally:
         db.close()
-
-
-def test_extract_output_text_from_steps():
-    """實測 background interaction 無頂層 output_text，從 steps 取 model_output。"""
-    from app.providers.ai.antigravity import _extract_output_text
-
-    interaction = {
-        "status": "completed",
-        "steps": [
-            {"type": "thought", "summary": [{"text": "thinking...", "type": "text"}]},
-            {"type": "google_search_call", "id": "x", "arguments": {}},
-            {"type": "model_output", "content": [{"text": "新聞摘要本文", "type": "text"}]},
-        ],
-    }
-    assert _extract_output_text(interaction) == "新聞摘要本文"
-    assert _extract_output_text({"output_text": "頂層優先"}) == "頂層優先"
-    assert _extract_output_text({"steps": []}) == ""
 
 
 async def test_news_job_stops_on_quota(monkeypatch):
@@ -197,15 +200,13 @@ async def test_news_job_stops_on_quota(monkeypatch):
 
     calls = []
 
-    async def fake_research(self, symbol, name, market):
-        calls.append(symbol)
+    async def fake_research(db, stock, force=False):
+        calls.append(stock.symbol)
         if len(calls) >= 2:
-            raise QuotaExceededError("額度盡")
-        return "ok"
+            raise QuotaExceededError("今日免費額度已用盡", scope="rpd")
+        return None
 
-    monkeypatch.setattr(
-        "app.providers.ai.antigravity.AntigravityProvider.research_news", fake_research
-    )
+    monkeypatch.setattr("app.services.news_service.run_news_research", fake_research)
     db = SessionLocal()
     try:
         for sym in ("7108", "7109", "7110"):
@@ -221,98 +222,46 @@ async def test_news_job_stops_on_quota(monkeypatch):
     assert result["failed"] == []
 
 
-# ---- Antigravity 額度與韌性 ----
+# ---- 沒有新聞時的行為 ----
 
-async def test_antigravity_429_stops_the_batch(monkeypatch):
-    """429 必須是 QuotaExceededError，news job 才會提前收工。
+async def test_no_headlines_records_honestly_without_calling_ai(monkeypatch):
+    """來源都查無資料時要如實記錄，不可為了產出而叫 AI 生一段話。"""
+    ai_calls = []
 
-    若丟 UpstreamError，jobs.py 的 except Exception 會吞掉並繼續逐檔
-    轟炸一個已在限流的 API。
-    """
-    from app.core.exceptions import QuotaExceededError
-    from app.models import WatchlistItem
-    from app.providers.ai import antigravity
-    from app.scheduler.jobs import news_research_daily
+    async def no_news(symbol, name, market):
+        return []
 
-    # 交易日閘門與本測試無關；不擋掉的話週末/假日會提前 return
-    # {"skipped": ...}，測試每逢週末必失敗（CI 也是）
-    monkeypatch.setattr("app.scheduler.jobs._non_trading_gate", lambda market: None)
+    async def fake_generate(db, prompt, output_model):
+        ai_calls.append(prompt)
+        raise AssertionError("沒有新聞就不該呼叫 AI")
 
-    calls = {"n": 0}
-
-    class _RateLimited:
-        def __init__(self, **kwargs):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        async def post(self, *args, **kwargs):
-            calls["n"] += 1
-            return SimpleNamespace(
-                status_code=429, text="rate limited", json=lambda: {}
-            )
-
-    monkeypatch.setattr(antigravity.httpx, "AsyncClient", _RateLimited)
+    monkeypatch.setattr("app.providers.news_feed.fetch_headlines", no_news)
+    monkeypatch.setattr("app.providers.ai.router.generate_structured", fake_generate)
 
     db = SessionLocal()
     try:
-        for sym in ("7401", "7402", "7403"):
-            stock = _seed_stock(db, sym)
-            db.add(WatchlistItem(stock_id=stock.id, ai_managed=True))
-        db.commit()
+        stock = _seed_stock(db, "7120")
+        row = await news_service.run_news_research(db, stock)
+
+        assert json.loads(row.payload_json)["summary"] == "近 7 天無重大新聞"
+        assert row.model == "none"
+        assert ai_calls == []
     finally:
         db.close()
 
-    # provider 層應丟 QuotaExceededError
-    with pytest.raises(QuotaExceededError):
-        await antigravity.AntigravityProvider(SessionLocal()).research_news(
-            "7401", "測試", "TW"
-        )
 
-    before = calls["n"]
-    result = await news_research_daily("TW")
-    # 關鍵斷言：撞 429 後立刻 break，不會對其餘每一檔再打一次
-    # （researched 可能 >0——共用測試 DB 中較早的股票已有當日快取，
-    #   走快取不會呼叫 Antigravity，與本次驗證的行為無關）
-    assert calls["n"] - before == 1, f"限流後仍繼續呼叫 {calls['n'] - before} 次"
-    assert result["failed"] == []  # 限流是提前收工，不是逐檔失敗
+def test_render_keeps_the_plain_text_contract():
+    """下游（分析管線注入、前端顯示）吃的是純文字，格式不能變。"""
+    from app.providers.ai.schemas import NewsBrief, NewsHighlight
 
-
-async def test_antigravity_reserves_realistic_token_estimate(monkeypatch):
-    """預約要帶合理的 token 估計，否則 TPM 防線對 in-flight 任務失效。"""
-    from app.providers.ai import antigravity
-
-    captured = {}
-
-    def fake_reserve(db, model, estimated_tokens=0):
-        captured["tokens"] = estimated_tokens
-        return 1
-
-    monkeypatch.setattr(antigravity, "reserve_quota", fake_reserve)
-    monkeypatch.setattr(antigravity, "finalize_quota", lambda *a, **k: None)
-    monkeypatch.setattr(antigravity, "cancel_quota", lambda *a, **k: None)
-
-    async def fake_create(self, prompt):
-        return {"id": "x", "status": "completed"}
-
-    async def fake_wait(self, interaction):
-        return {"status": "completed", "usage": {},
-                "steps": [{"type": "model_output",
-                           "content": [{"text": "摘要", "type": "text"}]}]}
-
-    monkeypatch.setattr(antigravity.AntigravityProvider, "_create", fake_create)
-    monkeypatch.setattr(antigravity.AntigravityProvider, "_wait", fake_wait)
-
-    db = SessionLocal()
-    try:
-        await antigravity.AntigravityProvider(db).research_news("2330", "台積電", "TW")
-    finally:
-        db.close()
-
-    assert captured["tokens"] >= 10_000, (
-        f"預約只估了 {captured['tokens']} tokens，實測單次任務約 34K"
+    brief = NewsBrief(
+        tone="偏空", tone_reason="訂單能見度下修",
+        highlights=[
+            NewsHighlight(date="08/01", summary="法說會下修財測",
+                          source="經濟日報", url="https://money.example/a"),
+        ],
     )
+    text = news_service._render(brief)
+
+    assert text.splitlines()[0] == "偏空——訂單能見度下修"
+    assert "08/01 法說會下修財測（經濟日報｜https://money.example/a）" in text

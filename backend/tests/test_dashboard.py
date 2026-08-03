@@ -99,8 +99,8 @@ def test_dashboard_includes_stored_analysis_and_news(client):
                 AiReport(
                     stock_id=stock.id,
                     trade_date=today,
-                    provider="antigravity",
-                    model="antigravity-preview-05-2026",
+                    provider="gemini",
+                    model="gemini-3.5-flash-lite",
                     prompt_version="news-v2",
                     input_hash="dashboard-news",
                     kind="news",

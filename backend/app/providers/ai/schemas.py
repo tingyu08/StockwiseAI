@@ -106,9 +106,22 @@ class DailyBriefing(BaseModel):
     overall_stance: Literal["bullish", "neutral", "bearish"]
 
 
-class NewsDigest(BaseModel):
-    """Antigravity 新聞研究輸出（自由文字摘要＋來源）。"""
+class NewsHighlight(BaseModel):
+    """一則新聞的重點。日期與來源網址由我們提供，AI 只做摘要與挑選。"""
 
-    symbol: str
+    date: str  # MM/DD
     summary: str
-    sources: list[str] = []
+    source: str
+    url: str
+
+
+class NewsBrief(BaseModel):
+    """個股新聞面研究。
+
+    改用結構化輸出（舊的 Antigravity agent 不支援，只能回自由文字）：
+    欄位缺漏會被 schema 擋下，也讓「出處」成為必填而非仰賴 AI 自律。
+    """
+
+    tone: Literal["偏多", "偏空", "中性"]
+    tone_reason: str
+    highlights: list[NewsHighlight] = []
