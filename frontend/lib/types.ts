@@ -97,5 +97,4 @@ export interface StockDashboard extends PriceSeries {
   prediction: PredictionData | null;
   analysis: AnalysisData | null;
   news: NewsData | null;
-  usage: UsageRow[];
 }

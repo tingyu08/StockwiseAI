@@ -27,7 +27,7 @@ function setup() {
     stock: {
       symbol: "2330", market: "TW", name: "TSMC", currency: "TWD", kind: "stock", tracked: true,
     },
-    series: [], prediction: null, analysis: null, news: null, usage: [],
+    series: [], prediction: null, analysis: null, news: null,
   } as StockDashboard;
   queryClient.setQueryData(["stock-dashboard", "tw", "2330", "3m"], base);
   queryClient.setQueryData(["stock-dashboard", "tw", "2330", "1y"], base);

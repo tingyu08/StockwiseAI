@@ -62,7 +62,8 @@ def test_dashboard_returns_one_complete_payload_without_external_calls(client, m
     assert data["prediction"]["method"] == "regression_channel"
     assert data["analysis"] is None
     assert data["news"] is None
-    assert isinstance(data["usage"], list)
+    # 額度快照走獨立的 /usage 端點，不再夾帶在 dashboard 裡
+    assert "usage" not in data
 
 
 def test_dashboard_includes_stored_analysis_and_news(client):

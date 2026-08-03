@@ -30,7 +30,6 @@ it("loads the complete stock page with one dashboard request", async () => {
     prediction: null,
     analysis: null,
     news: null,
-    usage: [],
   });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: PropsWithChildren) => (
@@ -53,7 +52,7 @@ it("loads the complete stock page with one dashboard request", async () => {
 
 it("separates market and range in the dashboard cache key", async () => {
   vi.mocked(apiGet).mockResolvedValue({
-    stock: {}, series: [], prediction: null, analysis: null, news: null, usage: [],
+    stock: {}, series: [], prediction: null, analysis: null, news: null,
   });
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: PropsWithChildren) => (

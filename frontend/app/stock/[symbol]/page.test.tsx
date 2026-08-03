@@ -58,7 +58,6 @@ beforeEach(() => {
       prediction: null,
       analysis: { report: { reasoning: "stored analysis" } },
       news: { summary: "stored news" },
-      usage: [],
     },
   });
 });
@@ -105,7 +104,6 @@ it("switches ranges and hides prediction bands", async () => {
       prediction: { horizons: { "20": [{ date: "2026-07-16", mid: 101 }] } },
       analysis: null,
       news: null,
-      usage: [],
     },
   });
 
