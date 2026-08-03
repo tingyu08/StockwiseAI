@@ -65,13 +65,6 @@ export interface AnalysisData {
   created_at: string | null;
 }
 
-export interface UsageRow {
-  model: string;
-  rpd: number;
-  used: number;
-  remaining: number;
-}
-
 export interface NewsData {
   date: string;
   model: string;

@@ -7,7 +7,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 
 import { apiGet } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
-import { useAnalysis, useUsage } from "./use-analysis";
+import { useAnalysis } from "./use-analysis";
 import { useNews } from "./use-news";
 import { usePredictions } from "./use-premium";
 import { useWatchlist } from "./use-stocks";
@@ -34,10 +34,9 @@ it("uses query-specific cache durations", async () => {
     useAnalysis("2330");
     useNews("2330");
     usePredictions("2330");
-    useUsage();
   }, { wrapper });
 
-  await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(5));
+  await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(4));
   expect(queryClient.getQueryCache().find({ queryKey: ["watchlist", "tw"] })?.options.staleTime)
     .toBe(10 * 60_000);
   expect(queryClient.getQueryCache().find({ queryKey: ["analysis", "tw", "2330"] })?.options.staleTime)
@@ -46,6 +45,4 @@ it("uses query-specific cache durations", async () => {
     .toBe(10 * 60_000);
   expect(queryClient.getQueryCache().find({ queryKey: ["predictions", "tw", "2330"] })?.options.staleTime)
     .toBe(5 * 60_000);
-  expect(queryClient.getQueryCache().find({ queryKey: ["usage"] })?.options.staleTime)
-    .toBe(60_000);
 });

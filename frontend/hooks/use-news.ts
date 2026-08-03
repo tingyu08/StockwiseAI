@@ -48,7 +48,6 @@ export function useRunNews(symbol: string) {
         { queryKey: ["stock-dashboard", market, symbol] },
         (current) => current ? { ...current, news: data } : current,
       );
-      qc.invalidateQueries({ queryKey: ["usage"] });
     },
   });
 }

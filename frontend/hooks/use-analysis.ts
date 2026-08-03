@@ -3,11 +3,11 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { apiGet, apiRequest, ApiError } from "@/lib/api";
-import { STORED_REPORT_STALE_MS, USAGE_STALE_MS } from "@/lib/query-policy";
-import type { AnalysisData, StockDashboard, UsageRow } from "@/lib/types";
+import { STORED_REPORT_STALE_MS } from "@/lib/query-policy";
+import type { AnalysisData, StockDashboard } from "@/lib/types";
 import { useMarketStore } from "@/stores/market";
 
-export type { AnalysisData, Scenario, UsageRow } from "@/lib/types";
+export type { AnalysisData, Scenario } from "@/lib/types";
 
 export function useAnalysis(symbol: string) {
   const market = useMarketStore((s) => s.market);
@@ -17,15 +17,6 @@ export function useAnalysis(symbol: string) {
     retry: (count, error) =>
       !(error instanceof ApiError && error.status === 404) && count < 1,
     staleTime: STORED_REPORT_STALE_MS,
-  });
-}
-
-export function useUsage() {
-  return useQuery({
-    queryKey: ["usage"],
-    queryFn: () => apiGet<UsageRow[]>("/usage"),
-    refetchInterval: 60_000,
-    staleTime: USAGE_STALE_MS,
   });
 }
 
@@ -47,7 +38,6 @@ function useRunAnalysis(kind: "routine", symbol: string) {
         { queryKey: ["stock-dashboard", market, symbol] },
         (current) => current ? { ...current, analysis: data } : current,
       );
-      qc.invalidateQueries({ queryKey: ["usage"] });
     },
   });
 }

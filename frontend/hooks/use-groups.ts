@@ -157,7 +157,6 @@ export function useRunOverview() {
     },
     onSuccess: (data) => {
       qc.setQueryData(["overview", market], data);
-      qc.invalidateQueries({ queryKey: ["usage"] });
       qc.invalidateQueries({ queryKey: ["analysis"] });
     },
   });
