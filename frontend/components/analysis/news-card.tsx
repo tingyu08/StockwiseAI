@@ -2,20 +2,16 @@
 
 import { FreshnessNote } from "@/components/freshness-note";
 import { useRunNews } from "@/hooks/use-news";
-import type { NewsData, UsageRow } from "@/lib/types";
+import type { NewsData } from "@/lib/types";
 
 interface NewsCardProps {
   symbol: string;
   data: NewsData | null;
-  usage: UsageRow[];
   isLoading: boolean;
 }
 
-export function NewsCard({ symbol, data, usage, isLoading }: NewsCardProps) {
+export function NewsCard({ symbol, data, isLoading }: NewsCardProps) {
   const run = useRunNews(symbol);
-
-  const remaining =
-    usage.find((u) => u.model.startsWith("antigravity"))?.remaining ?? null;
   const noNews = data === null;
 
   return (
@@ -24,19 +20,18 @@ export function NewsCard({ symbol, data, usage, isLoading }: NewsCardProps) {
         <h3 className="text-lg font-semibold">📰 新聞面研究</h3>
         <button
           onClick={() => run.mutate()}
-          disabled={run.isPending || remaining === 0}
-          title={remaining === 0 ? "今日新聞研究額度已用盡，明日恢復" : ""}
+          disabled={run.isPending}
           className="rounded-md border border-neutral-300 px-3 py-1 text-xs hover:bg-neutral-100 disabled:opacity-40 dark:border-neutral-700 dark:hover:bg-neutral-800"
         >
-          {run.isPending ? "AI 搜尋新聞中（約 1~3 分鐘）…" : "搜尋新聞"}
+          {run.isPending ? "抓新聞並摘要中（約 10~30 秒）…" : "研究新聞"}
         </button>
       </div>
 
       {isLoading && <p className="text-sm text-neutral-500">載入新聞研究中…</p>}
       {noNews && !data && !run.isPending && (
         <p className="text-sm text-neutral-500">
-          尚無近期新聞研究。點「搜尋新聞」，AI 會自行上網搜尋近 7 天新聞並摘要
-          （結果同時餵給當日 AI 分析）。
+          尚無近期新聞研究。點「研究新聞」，系統會抓近 7 天的新聞標題，
+          再交給 AI 摘要（出處為系統提供，結果同時餵給當日 AI 分析）。
         </p>
       )}
       {run.isError && (

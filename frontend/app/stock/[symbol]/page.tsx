@@ -98,7 +98,6 @@ export default function StockPage({
       <NewsCard
         symbol={symbol}
         data={data?.news ?? null}
-        usage={data?.usage ?? []}
         isLoading={isLoading}
       />
     </div>
