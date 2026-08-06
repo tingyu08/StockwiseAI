@@ -9,7 +9,11 @@ from app.core.db import get_db
 from app.core.envelope import Envelope, ok
 from app.models import AiReport, SimOrder, Stock
 from app.services.sim.engine import fill_pending_orders, get_or_create_account
-from app.services.sim.portfolio import equity_curve, positions_dto
+from app.services.sim.portfolio import (
+    equity_curve,
+    positions_dto,
+    realized_pnl_by_order,
+)
 from app.services.job_service import enqueue_job
 
 router = APIRouter(tags=["simulation"])
@@ -63,9 +67,21 @@ def orders_view(market: Market, db: Session = Depends(get_db)) -> Envelope:
         if report_ids
         else {}
     )
+    # 賣出的已實現損益由全部成交紀錄重放推導（與持倉均價同一套口徑）
+    realized = realized_pnl_by_order(db, account)
     out = []
     for order, stock in rows:
         report = reports.get(order.ai_report_id)
+        fill_price = float(order.fill_price) if order.fill_price is not None else None
+        fee = float(order.fee) if order.fee is not None else None
+        # 未成交沒有成交價 → 金額一律 null。填 0 會被讀成「這筆不用錢」
+        gross = round(float(order.qty) * fill_price, 2) if fill_price is not None else None
+        net = (
+            round(gross + (fee or 0) if order.side == "buy" else gross - (fee or 0), 2)
+            if gross is not None
+            else None
+        )
+        pnl = realized.get(order.id, {})
         out.append(
             {
                 "id": order.id,
@@ -75,8 +91,14 @@ def orders_view(market: Market, db: Session = Depends(get_db)) -> Envelope:
                 "qty": float(order.qty),
                 # is not None：美股手續費恆為 0，真值判斷會把它變成 null，
                 # 前端就分不清「免手續費」與「尚未計費」
-                "fill_price": float(order.fill_price) if order.fill_price is not None else None,
-                "fee": float(order.fee) if order.fee is not None else None,
+                "fill_price": fill_price,
+                "fee": fee,
+                # 成交金額（未計費）與淨額：買進為實際支出，賣出為實際入袋
+                "gross_amount": gross,
+                "net_amount": net,
+                "avg_cost": pnl.get("avg_cost"),
+                "realized_pnl": pnl.get("realized_pnl"),
+                "realized_pnl_pct": pnl.get("realized_pnl_pct"),
                 "status": order.status,
                 "decided_by": order.decided_by,
                 "fill_kind": order.fill_kind,

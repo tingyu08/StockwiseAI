@@ -43,6 +43,14 @@ export interface SimOrderView {
   qty: number;
   fill_price: number | null;
   fee: number | null;
+  /** 成交金額（未計費）。未成交為 null */
+  gross_amount: number | null;
+  /** 買進＝實際支出（含費），賣出＝實際入袋（扣費與稅）。未成交為 null */
+  net_amount: number | null;
+  /** 以下三項僅賣出且已成交時有值 */
+  avg_cost: number | null;
+  realized_pnl: number | null;
+  realized_pnl_pct: number | null;
   status: "pending" | "filled" | "rejected";
   decided_by: string;
   fill_kind: "stop_loss" | "take_profit" | null;

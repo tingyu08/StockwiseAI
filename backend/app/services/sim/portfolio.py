@@ -79,11 +79,31 @@ def positions_dto(db: Session, account: SimAccount) -> list[dict]:
     return out
 
 
-def _position_state(
+def realized_pnl_by_order(db: Session, account: SimAccount) -> dict[int, dict]:
+    """{order_id: {avg_cost, realized_pnl, realized_pnl_pct}}，只含賣出。
+
+    交易日誌用：一筆賣出賺賠多少，要拿賣出淨額跟「賣出當下的成本均價」比。
+    買進不列入——那只是把現金換成部位，此刻沒有實現任何損益。
+    """
+    orders = db.execute(
+        select(SimOrder)
+        .where(SimOrder.account_id == account.id, SimOrder.status == "filled")
+        .order_by(SimOrder.filled_at, SimOrder.id)
+    ).scalars().all()
+    return _replay(orders)[2]
+
+
+def _replay(
     orders: list[SimOrder],
-) -> tuple[dict[int, float], dict[int, float]]:
+) -> tuple[dict[int, float], dict[int, float], dict[int, dict]]:
+    """重放成交紀錄，回傳 (股數, 成本, 每筆賣出的已實現損益)。
+
+    持倉均價與日誌損益共用這一份重放：兩邊各寫一份遲早會漂移，
+    屆時「持倉均價」與「賣出時的均價」會對不起來而無從解釋。
+    """
     quantities: dict[int, float] = {}
     costs: dict[int, float] = {}
+    realized: dict[int, dict] = {}
     for o in orders:
         stock_id = o.stock_id
         qty = quantities.get(stock_id, 0.0)
@@ -93,10 +113,30 @@ def _position_state(
             qty += float(o.qty)
         else:
             if qty > 0:
-                cost -= cost * (float(o.qty) / qty)  # 按比例沖銷
+                avg = cost / qty
+                sold = float(o.qty)
+                basis = avg * sold
+                # 淨額扣掉賣出費用與稅：兩邊費用都算進去，
+                # 帳面損益才等於現金實際的增減
+                proceeds = sold * float(o.fill_price) - float(o.fee or 0)
+                realized[o.id] = {
+                    "avg_cost": round(avg, 2),
+                    "realized_pnl": round(proceeds - basis, 2),
+                    "realized_pnl_pct": (
+                        round((proceeds - basis) / basis * 100, 2) if basis else None
+                    ),
+                }
+                cost -= cost * (sold / qty)  # 按比例沖銷
             qty -= float(o.qty)
         quantities[stock_id] = round(qty, 4)
         costs[stock_id] = cost
+    return quantities, costs, realized
+
+
+def _position_state(
+    orders: list[SimOrder],
+) -> tuple[dict[int, float], dict[int, float]]:
+    quantities, costs, _ = _replay(orders)
     active = {stock_id: qty for stock_id, qty in quantities.items() if qty > 0}
     averages = {
         stock_id: round(costs[stock_id] / qty, 2)

@@ -13,13 +13,13 @@ import {
 } from "recharts";
 
 import { AiManagedPanel } from "@/components/ai-managed-panel";
+import { SimOrderRow } from "@/components/sim-order-row";
 import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import {
   useRunSimStep,
   useSimAccount,
   useSimOrders,
   type SimStepResult,
-  type SimOrderView,
 } from "@/hooks/use-simulation";
 import { useMarketStore } from "@/stores/market";
 
@@ -170,7 +170,7 @@ export default function SimulationPage() {
         ) : (
           <ul className="mt-2 divide-y divide-neutral-100 dark:divide-neutral-800/50">
             {orders.map((o) => (
-              <OrderRow key={o.id} order={o} />
+              <SimOrderRow key={o.id} order={o} />
             ))}
           </ul>
         )}
@@ -231,65 +231,3 @@ function Stat({ label, value, cls = "" }: { label: string; value: string; cls?: 
   );
 }
 
-const STATUS_LABEL = { pending: "待成交", filled: "已成交", rejected: "已拒絕" } as const;
-
-function OrderRow({ order }: { order: SimOrderView }) {
-  const [open, setOpen] = useState(false);
-  const sideCls =
-    order.side === "buy"
-      ? "bg-red-100 text-red-700 dark:bg-red-900 dark:text-red-200"
-      : "bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-200";
-
-  return (
-    <li className="px-5 py-3">
-      <button onClick={() => setOpen(!open)} className="flex w-full items-center gap-3 text-left text-sm">
-        <span className={`rounded px-2 py-0.5 text-xs font-semibold ${sideCls}`}>
-          {order.side === "buy" ? "買" : "賣"}
-        </span>
-        <span className="font-mono font-semibold">{order.symbol}</span>
-        <span className="text-neutral-500">{order.name}</span>
-        {order.fill_kind && (
-          <span
-            className="rounded bg-amber-100 px-1.5 py-0.5 text-xs font-semibold text-amber-700 dark:bg-amber-900 dark:text-amber-200"
-            title="盤中哨兵以觸發當下的觀察價成交（非隔日開盤價）"
-          >
-            {order.fill_kind === "stop_loss" ? "⚡盤中停損" : "⚡盤中停利"}
-          </span>
-        )}
-        <span className="ml-auto text-neutral-500">
-          {order.qty.toLocaleString()} 股
-          {order.fill_price != null && ` @ ${order.fill_price}`}
-        </span>
-        <span
-          className={`text-xs ${
-            order.status === "rejected" ? "text-red-500" : order.status === "pending" ? "text-amber-500" : "text-neutral-400"
-          }`}
-        >
-          {STATUS_LABEL[order.status]}
-        </span>
-        <span className="text-xs text-neutral-400">{order.ai_report ? "▾ AI 理由" : ""}</span>
-      </button>
-      {open && (
-        <div className="mt-2 rounded-lg bg-neutral-50 p-3 text-xs leading-relaxed text-neutral-600 dark:bg-neutral-900 dark:text-neutral-300">
-          {order.reject_reason && <p className="mb-1 text-red-500">拒絕原因：{order.reject_reason}</p>}
-          {order.ai_report ? (
-            <>
-              <p className="mb-1">
-                AI 判斷：{order.ai_report.action}（信心 {(order.ai_report.confidence * 100).toFixed(0)}%）
-                ｜停損 {order.ai_report.stop_loss}
-              </p>
-              <p>{order.ai_report.reasoning}</p>
-            </>
-          ) : (
-            <p>停損觸發或無報告連結。</p>
-          )}
-          <p className="mt-1 text-neutral-400">
-            建立 {order.created_at?.slice(0, 16).replace("T", " ")}
-            {order.filled_at && `｜成交 ${order.filled_at.slice(0, 10)}`}
-            {order.fee != null && `｜費用 ${order.fee}`}
-          </p>
-        </div>
-      )}
-    </li>
-  );
-}
