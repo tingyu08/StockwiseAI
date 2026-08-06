@@ -35,6 +35,9 @@ class JobRun(Base):
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # 重試退避到期時間：NULL＝可立即領取。claim_next_job 會略過尚未到期者，
+    # 讓同一批工作的下一次嘗試跨過上游故障窗口，而不是幾十秒內燒完額度。
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime)
     heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)

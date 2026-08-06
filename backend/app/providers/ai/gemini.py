@@ -42,6 +42,17 @@ def _retry_delay(retry_index: int) -> float:
     return (2**retry_index) + random.uniform(0, 0.25)
 
 
+def _service_unavailable_delay(retry_index: int) -> float:
+    """503 專屬退避：5s, 15s, 45s（同樣加最多 250ms 抖動）。
+
+    503 是 Google 端過載，不是我們送太快——秒級重打幾乎必然再吃一次。
+    2026-08-05 20:12 的 ai-batch-us 就是實例：1s、2s 退避讓三次嘗試擠在
+    7 秒內打完，全部踩在同一段故障上。429 仍走 _retry_delay：那是限流，
+    Google 會在 RetryInfo 給明確的 retryDelay，猜測性的長等待反而更差。
+    """
+    return (5 * 3**retry_index) + random.uniform(0, 0.25)
+
+
 MAX_RETRY_AFTER_SEC = 30.0
 
 
@@ -565,7 +576,7 @@ class GeminiProvider(AIProvider):
                     elapsed_ms,
                 )
                 if attempt < max_attempts:
-                    delay = _retry_delay(attempt_index)
+                    delay = _service_unavailable_delay(attempt_index)
                     logger.warning(
                         "Gemini retry model=%s next_attempt=%d/%d retry_in_seconds=%.3f",
                         self.model_name,

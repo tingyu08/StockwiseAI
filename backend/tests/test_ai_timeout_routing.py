@@ -186,7 +186,10 @@ async def test_gemini_503_retries_then_succeeds(monkeypatch):
 
     monkeypatch.setattr(gemini.httpx, "AsyncClient", lambda **kw: FlakyClient())
     monkeypatch.setattr(gemini, "_sleep", record_sleep, raising=False)
-    monkeypatch.setattr(gemini, "_retry_delay", lambda retry: retry + 1, raising=False)
+    # 503 走專屬的長退避（見 _service_unavailable_delay），不是通用的 _retry_delay
+    monkeypatch.setattr(
+        gemini, "_service_unavailable_delay", lambda retry: retry + 1, raising=False
+    )
     db = SessionLocal()
     try:
         result = await GeminiProvider("gemini-3.6-flash", db)._call_api(

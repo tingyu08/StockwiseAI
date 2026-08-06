@@ -17,6 +17,12 @@ from app.models import JobRun
 DEFAULT_LEASE_SECONDS = 120
 HEARTBEAT_SECONDS = 30
 STALE_SWEEP_SECONDS = 30
+# 失敗重試前的等待：第 1 次失敗等 1 分鐘，之後每次 5 分鐘。
+# 沒有這段延遲的話，worker 每秒輪詢會立刻把失敗的工作再撿回去——
+# 2026-08-05 的 ai-batch-us 就是這樣把三次嘗試全燒在同一段 Google 503 上
+# （20:11:52 → 20:12:20 → 20:12:29，前後 37 秒）。上游的暫時性故障
+# 通常要數十秒到數分鐘才會恢復，重試必須跨過那個窗口才有意義。
+RETRY_BACKOFF = (timedelta(minutes=1), timedelta(minutes=5))
 logger = logging.getLogger(__name__)
 Dispatcher = Callable[[str, dict], Awaitable[dict | None]]
 
@@ -27,6 +33,11 @@ class JobStateError(AppError):
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _job_retry_delay(attempts: int) -> timedelta:
+    """已嘗試 attempts 次後，下一次嘗試要等多久。"""
+    return RETRY_BACKOFF[min(max(attempts, 1), len(RETRY_BACKOFF)) - 1]
 
 
 def enqueue_job(
@@ -111,7 +122,15 @@ def claim_next_job(now: datetime | None = None) -> int | None:
     now = now or utc_now()
     db = SessionLocal()
     try:
-        stmt = select(JobRun).where(JobRun.status == "queued").order_by(JobRun.created_at, JobRun.id)
+        stmt = (
+            select(JobRun)
+            .where(
+                JobRun.status == "queued",
+                # 退避未到期的工作留在佇列裡但不可領取
+                (JobRun.next_attempt_at.is_(None)) | (JobRun.next_attempt_at <= now),
+            )
+            .order_by(JobRun.created_at, JobRun.id)
+        )
         if db.bind is not None and db.bind.dialect.name == "postgresql":
             stmt = stmt.with_for_update(skip_locked=True)
         else:
@@ -123,6 +142,7 @@ def claim_next_job(now: datetime | None = None) -> int | None:
         run.attempts += 1
         run.started_at = now
         run.finished_at = None
+        run.next_attempt_at = None  # 已領取，退避標記完成任務
         run.heartbeat_at = now
         run.lease_expires_at = now + timedelta(seconds=DEFAULT_LEASE_SECONDS)
         run.error = None
@@ -148,6 +168,8 @@ def retry_job(run_id: int) -> int:
         run.finished_at = None
         run.heartbeat_at = None
         run.lease_expires_at = None
+        # 人工按下重試是明確意圖，不該再等自動退避
+        run.next_attempt_at = None
         # 清掉 idempotency_key：排程可能已用同一把 key 排了新的 queued 工作
         # （enqueue_job 只看 active 狀態，看不到這筆 failed），此時把它改回
         # queued 會撞 uq_job_runs_active_idempotency 冒泡成 500。
@@ -274,6 +296,7 @@ def _finish_job(
         elif run.attempts < run.max_attempts:
             run.status = "queued"
             run.error = str(error)[:4000]
+            run.next_attempt_at = now + _job_retry_delay(run.attempts)
         else:
             run.status = "failed"
             run.error = str(error)[:4000]
