@@ -8,7 +8,7 @@
 簡報取的是「整份自選清單」（不像例行批次只取 AI 託管），更容易混進這種
 還沒累積夠歷史的標的，所以這條路徑特別脆弱。
 """
-from datetime import date, timedelta
+from datetime import timedelta
 
 import pytest
 
@@ -16,16 +16,23 @@ from app.core.db import SessionLocal
 from app.core.exceptions import NotFoundError
 from app.models import DailyPrice, Stock, WatchlistItem
 from app.services import analysis_service
+from app.services.time_service import market_today
 
 
 def _seed(db, symbol, *, days: int, ai_managed=False, market="TW"):
-    """建立一檔股票並塞 days 筆日線（days<30 即為『資料不足』）。"""
+    """建立一檔股票並塞 days 筆日線（days<30 即為『資料不足』）。
+
+    日期必須相對於今天回推，不可寫死。build_context 只看
+    `market_today() - 180 天` 視窗內的筆數，寫死的起點會隨真實時間
+    滑出視窗——曾以固定的 2026-01-05 起算，於 2026-08-04 起
+    「60 筆」在視窗內只剩 29 筆，資料充足的標的被誤判成資料不足。
+    """
     stock = Stock(symbol=symbol, market=market, name=f"不足{symbol}",
                   currency="TWD", kind="stock")
     db.add(stock)
     db.commit()
     db.refresh(stock)
-    start = date(2026, 1, 5)
+    start = market_today(market) - timedelta(days=days - 1)  # 最後一筆＝今天
     for i in range(days):
         d = start + timedelta(days=i)
         db.add(DailyPrice(stock_id=stock.id, date=d, open=100.0, high=101.0,
