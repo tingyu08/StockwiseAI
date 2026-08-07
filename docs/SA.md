@@ -78,7 +78,8 @@ UC-B4 (排程)新聞研究       Antigravity 對自選股搜尋近期新聞產�
 |------|------|---------|------|
 | FinMind API | 台股日線、法人、ETF 淨值 | 免費 token 每小時請求上限 | TWSE/TPEX OpenAPI |
 | TWSE/TPEX OpenAPI | 台股官方資料、折溢價 | 無 key，禮貌性限流 | FinMind |
-| yfinance | 美股日線、ETF NAV | 非官方，介面可能變動 | Stooq |
+| FinMind USStockPrice/USStockInfo | 美股日線、名稱與 ETF 分類、全球指數 | 與台股共用 token 額度 | 無（yfinance 已移除，見下） |
+| Finnhub `/quote` | 美股盤中報價（出場哨兵） | 免費層 60 req/分鐘 | 無——取不到即該輪哨兵如實失敗 |
 | Gemini API | AI 分析（3.1 Flash Lite 500 RPD／3.5 Flash 20 RPD） | 額度依帳號儀表板 | 例行分析只用 Flash Lite；重要分析可由 3.5 降級至 Flash Lite |
 | Antigravity（Interactions API） | 新聞/事件研究 | 100 RPD | 跳過該日新聞面 |
 

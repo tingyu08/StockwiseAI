@@ -1,8 +1,8 @@
-"""美股盤中報價改以 Finnhub 為主、yfinance 為備援。
+"""美股盤中報價：Finnhub 為唯一來源。
 
-起因：Yahoo 以 IP 信譽封鎖機房來源，正式環境從「偶爾一檔失敗」惡化到
-「3 檔持倉全滅」，停損/停利實質完全失效。Finnhub 以 API key 辨識呼叫者，
-不看 IP，這是主從順序反轉的理由。
+Yahoo（yfinance）以 IP 信譽封鎖機房來源，先是被降為備援，最終完整移除——
+它在正式環境必定 429，留著只是讓失敗看起來像有在努力。Finnhub 以 API key
+辨識呼叫者，不看 IP，這是它取而代之的理由。
 """
 import httpx
 import pytest
@@ -160,11 +160,11 @@ def test_finnhub_token_is_redacted_from_logs():
 # ---- 暫時性故障的韌性與可診斷性 ----
 
 
-async def test_timeout_is_retried_before_falling_back(monkeypatch):
+async def test_timeout_is_retried_before_giving_up(monkeypatch):
     """逾時重試一次再放棄。
 
-    主來源一次逾時就整批掉到 yfinance，而 Yahoo 對機房 IP 回 429——
-    2026-08-06 18:40 的哨兵就是這樣「5 檔持倉全滅」。
+    這是唯一的美股報價來源，一次逾時就等於當輪停損完全失效——
+    2026-08-06 18:40 的哨兵「5 檔持倉全滅」即如此。
     """
     slept = []
 
@@ -227,54 +227,25 @@ async def test_failure_log_names_the_exception_type(monkeypatch, caplog):
     assert "ReadTimeout" in caplog.text
 
 
-# ---- 與 yfinance 的主從關係 ----
-
-async def test_finnhub_is_primary_and_yfinance_not_touched(monkeypatch):
-    """Finnhub 全數命中時不該再去打 Yahoo——那正是被限流的來源。"""
-    _patch_client(monkeypatch, {
-        "AAPL": _Resp(200, {"c": 261.74}),
-        "MSFT": _Resp(200, {"c": 502.1}),
-    })
-    called = []
-
-    async def fake_yf(symbols):
-        called.append(symbols)
-        return {}
-
-    monkeypatch.setattr(intraday, "_us_quotes_via_yfinance", fake_yf)
-
-    quotes = await intraday._us_quotes(["AAPL", "MSFT"])
-
-    assert quotes == {"AAPL": 261.74, "MSFT": 502.1}
-    assert called == []
+# ---- 美股盤中報價的唯一來源 ----
 
 
-async def test_yfinance_only_fills_the_gaps(monkeypatch):
+async def test_finnhub_is_the_only_us_intraday_source(monkeypatch):
+    """Finnhub 取不到的標的就是沒有——yfinance 備援已完整移除。
+
+    Yahoo 對機房 IP 必定 429，留著它只是讓失敗看起來像有在努力，
+    還白花請求與延遲（2026-08-06 18:40：5 檔全數退 yfinance、全數 429）。
+    """
     _patch_client(monkeypatch, {"AAPL": _Resp(200, {"c": 261.74})})  # MSFT 取不到
-    called = []
 
-    async def fake_yf(symbols):
-        called.append(symbols)
-        return {"MSFT": 500.0}
-
-    monkeypatch.setattr(intraday, "_us_quotes_via_yfinance", fake_yf)
-
-    quotes = await intraday._us_quotes(["AAPL", "MSFT"])
-
-    assert quotes == {"AAPL": 261.74, "MSFT": 500.0}
-    assert called == [["MSFT"]]  # 只補缺的那檔，不重打已取得的
+    assert await intraday._us_quotes(["AAPL", "MSFT"]) == {"AAPL": 261.74}
 
 
-async def test_falls_back_entirely_when_token_missing(monkeypatch):
-    """未設定 token 時行為等同修改前，不會讓哨兵直接壞掉。"""
+async def test_no_token_means_no_us_quotes_at_all(monkeypatch):
+    """未設定 token 時不再有替代來源：如實回空，讓哨兵那輪算失敗。"""
     monkeypatch.setattr(get_settings(), "finnhub_token", "")
 
-    async def fake_yf(symbols):
-        return {s: 100.0 for s in symbols}
-
-    monkeypatch.setattr(intraday, "_us_quotes_via_yfinance", fake_yf)
-
-    assert await intraday._us_quotes(["AAPL"]) == {"AAPL": 100.0}
+    assert await intraday._us_quotes(["AAPL"]) == {}
 
 
 async def test_tw_market_is_untouched_by_us_changes(monkeypatch):

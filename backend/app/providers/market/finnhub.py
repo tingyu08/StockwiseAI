@@ -8,7 +8,8 @@ Finnhub 是以 API key 辨識呼叫者的正式 API，不是給瀏覽器用的�
 機房 IP 不受影響——這是它跟 Yahoo 的關鍵差別。免費層 60 req/分鐘，
 而哨兵每小時只查數檔，額度綽綽有餘。
 
-未設定 token 時回傳空字典，由呼叫端退回 yfinance（維持原行為）。
+未設定 token 時回傳空字典——yfinance 備援已移除，此時哨兵取不到任何
+美股報價，該輪會如實算失敗（見 sim/sentinel）而非靜默跳過。
 """
 import asyncio
 import logging
@@ -22,8 +23,8 @@ logger = logging.getLogger(__name__)
 QUOTE_URL = "https://finnhub.io/api/v1/quote"
 TIMEOUT_SEC = 10
 # 逾時重試一次。哨兵是分鐘級的東西，退避只取一秒——重點是跨過一次網路抖動，
-# 不是等到上游痊癒。主來源一次逾時就整批掉到 yfinance 的代價太高：
-# Yahoo 對機房 IP 回 429，等於當輪停損完全失效（2026-08-06 18:40 實例）。
+# 不是等到上游痊癒。這是唯一的美股報價來源（yfinance 備援已移除），
+# 一次逾時就等於當輪停損完全失效（2026-08-06 18:40 實例）。
 RETRY_DELAY_SEC = 1.0
 _sleep = asyncio.sleep
 
@@ -55,8 +56,8 @@ def _warn_missing_token_once() -> None:
     if not _missing_token_warned:
         _missing_token_warned = True
         logger.warning(
-            "未設定 FINNHUB_TOKEN，美股盤中報價只能退回 yfinance"
-            "（Yahoo 對機房 IP 限流，停損可能失效）"
+            "未設定 FINNHUB_TOKEN，美股盤中報價將完全取不到"
+            "（yfinance 備援已移除），停損停利無法運作"
         )
 
 

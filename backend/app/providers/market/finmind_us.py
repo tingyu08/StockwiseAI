@@ -1,8 +1,10 @@
-"""FinMind 美股/指數日線（yfinance 的備援）。
+"""FinMind 美股/指數日線（美股日線與指數的唯一來源）。
 
-Yahoo 對雲端機房 IP 常限流；Stooq 已上 JS 反機器人驗證無法程式取用。
+Yahoo（yfinance）對雲端機房 IP 常限流，備援角色已由它接手並完整取代；
+Stooq 已上 JS 反機器人驗證無法程式取用。
 FinMind 的 USStockPrice 資料集支援一般美股代號與原生指數代號
-（^GSPC、^SOX、TSM 實測皆可），台股加權指數走 TaiwanStockPrice/TAIEX。
+（^GSPC、^IXIC、^DJI、^SOX、^TWII 與大中小型股、ETF 實測皆可），
+台股加權指數亦可走 TaiwanStockPrice/TAIEX。
 同步函式（呼叫端以 asyncio.to_thread 包裝），與 FinMindProvider 共用 token。
 """
 import logging

@@ -1,4 +1,4 @@
-"""FinMind 美股/指數備援：回應解析、yfinance 限流時的 fallback 路徑。"""
+"""FinMind 美股/指數：回應解析與 provider 契約（yfinance 已完整移除）。"""
 from datetime import date
 from types import SimpleNamespace
 
@@ -61,105 +61,47 @@ def test_error_body_returns_empty(monkeypatch):
     assert finmind_us.fetch_daily("SPY").empty
 
 
-def test_market_context_falls_back(monkeypatch):
-    """yfinance 限流 → _history 改走 FinMind。"""
-    from app.services import market_context
+async def test_us_provider_reads_daily_from_finmind(monkeypatch):
+    """美股日線的唯一來源是 FinMind。"""
+    from app.providers.market.us_market import USMarketProvider
 
-    class _RateLimited:
-        def __init__(self, *a):
-            pass
-
-        def history(self, **kw):
-            raise RuntimeError("Too Many Requests. Rate limited.")
-
-    monkeypatch.setattr(market_context.yf, "Ticker", _RateLimited)
     monkeypatch.setattr(finmind_us.httpx, "get", _mock_get(US_BODY))
-    quote = market_context._fetch_quote("^GSPC", "S&P 500")
-    assert quote is not None
-    assert quote.close == 744.8
-
-
-async def test_us_provider_falls_back(monkeypatch):
-    from app.providers.market.yfinance_us import YFinanceProvider, yf
-
-    class _RateLimited:
-        def __init__(self, *a):
-            pass
-
-        def history(self, **kw):
-            raise RuntimeError("Too Many Requests. Rate limited.")
-
-    monkeypatch.setattr(yf, "Ticker", _RateLimited)
-    monkeypatch.setattr(finmind_us.httpx, "get", _mock_get(US_BODY))
-    rows = await YFinanceProvider().get_daily_prices("SPY", date(2026, 7, 1), date(2026, 7, 9))
+    rows = await USMarketProvider().get_daily_prices("SPY", date(2026, 7, 1), date(2026, 7, 9))
     assert len(rows) == 2
     assert rows[-1].close == 744.8
 
 
-async def test_us_provider_falls_back_when_yfinance_returns_empty(monkeypatch):
-    from app.providers.market.yfinance_us import YFinanceProvider, yf
+async def test_us_provider_reports_upstream_failure_honestly(monkeypatch):
+    """FinMind 掛掉就如實失敗——沒有第二條路可退，不可假裝成「查無資料」。"""
+    from app.core.exceptions import UpstreamError
+    from app.providers.market.us_market import USMarketProvider
 
-    class _Empty:
-        def __init__(self, *a):
-            pass
+    def boom(*a, **kw):
+        raise RuntimeError("finmind down")
 
-        def history(self, **kw):
-            return pd.DataFrame()
+    monkeypatch.setattr(finmind_us, "fetch_daily", boom)
 
-    fallback = pd.DataFrame({
-        "Date": pd.to_datetime(["2026-07-09"]),
-        "Open": [747.4], "High": [751.3], "Low": [740.0],
-        "Close": [744.8], "Volume": [57447800],
-    })
-    monkeypatch.setattr(yf, "Ticker", _Empty)
-    monkeypatch.setattr(finmind_us, "fetch_daily", lambda *a, **kw: fallback)
-
-    rows = await YFinanceProvider().get_daily_prices(
-        "SPY", date(2026, 7, 1), date(2026, 7, 9)
-    )
-
-    assert len(rows) == 1
-    assert rows[0].close == 744.8
+    with pytest.raises(UpstreamError):
+        await USMarketProvider().get_daily_prices("SPY", date(2026, 7, 1), date(2026, 7, 9))
 
 
-async def test_us_provider_prefers_finmind(monkeypatch):
-    """日線主源為 FinMind：成功時完全不呼叫 yfinance。"""
-    from app.providers.market.yfinance_us import YFinanceProvider, yf
-
-    class _MustNotBeCalled:
-        def __init__(self, *a):
-            raise AssertionError("FinMind 成功時不應呼叫 yfinance")
-
-    monkeypatch.setattr(yf, "Ticker", _MustNotBeCalled)
+def test_market_context_reads_from_finmind(monkeypatch):
     monkeypatch.setattr(finmind_us.httpx, "get", _mock_get(US_BODY))
-    rows = await YFinanceProvider().get_daily_prices("SPY", date(2026, 7, 1), date(2026, 7, 9))
-    assert len(rows) == 2
-
-
-def test_market_context_prefers_finmind(monkeypatch):
     from app.services import market_context
 
-    class _MustNotBeCalled:
-        def __init__(self, *a):
-            raise AssertionError("FinMind 成功時不應呼叫 yfinance")
-
-    monkeypatch.setattr(market_context.yf, "Ticker", _MustNotBeCalled)
-    monkeypatch.setattr(finmind_us.httpx, "get", _mock_get(US_BODY))
     quote = market_context._fetch_quote("^GSPC", "S&P 500")
     assert quote is not None and quote.close == 744.8
 
 
-# ---- 搜尋驗證的 FinMind 備援（Yahoo 限流時仍能新增自選股）----
+def test_market_context_returns_none_when_finmind_has_nothing(monkeypatch):
+    """指數取不到就從缺，不再有 yfinance 可退。"""
+    from app.services import market_context
 
-def _patch_lookup_rate_limited(monkeypatch):
-    from app.core.exceptions import UpstreamError
-    from app.providers.market import yfinance_us
+    monkeypatch.setattr(finmind_us, "fetch_daily", lambda *a, **kw: pd.DataFrame())
+    assert market_context._fetch_quote("^GSPC", "S&P 500") is None
 
-    async def rate_limited(self, symbol):
-        raise UpstreamError("美股查詢暫時被上游限流，請稍後再試")
 
-    monkeypatch.setattr(yfinance_us.YFinanceProvider, "_lookup", rate_limited)
-
+# ---- 搜尋驗證（FinMind 為唯一來源）----
 
 _PRICED = pd.DataFrame({
     "Date": pd.to_datetime(["2026-07-20"]),
@@ -169,17 +111,16 @@ _PRICED = pd.DataFrame({
 
 
 async def test_search_uses_finmind_metadata_for_stock(monkeypatch):
-    """FinMind 為主源：名稱取自 USStockInfo，不必動用 yfinance。"""
-    from app.providers.market.yfinance_us import YFinanceProvider
+    """名稱與分類取自 USStockInfo。"""
+    from app.providers.market.us_market import USMarketProvider
 
-    _patch_lookup_rate_limited(monkeypatch)  # yfinance 一旦被呼叫就會炸
     monkeypatch.setattr(finmind_us, "fetch_daily", lambda *a, **kw: _PRICED)
     monkeypatch.setattr(
         finmind_us, "fetch_stock_info",
         lambda s: {"name": "Intel Corporation Common Stock", "kind": "stock"},
     )
 
-    results = await YFinanceProvider().search_stocks("intc")
+    results = await USMarketProvider().search_stocks("intc")
 
     assert len(results) == 1
     assert results[0].symbol == "INTC"
@@ -189,16 +130,15 @@ async def test_search_uses_finmind_metadata_for_stock(monkeypatch):
 
 async def test_search_classifies_etf_from_finmind_subsector(monkeypatch):
     """ETF 必須被正確分類，否則不會被納入 NAV/折溢價追蹤。"""
-    from app.providers.market.yfinance_us import YFinanceProvider
+    from app.providers.market.us_market import USMarketProvider
 
-    _patch_lookup_rate_limited(monkeypatch)
     monkeypatch.setattr(finmind_us, "fetch_daily", lambda *a, **kw: _PRICED)
     monkeypatch.setattr(
         finmind_us, "fetch_stock_info",
         lambda s: {"name": "Invesco QQQ Trust Series 1", "kind": "etf"},
     )
 
-    results = await YFinanceProvider().search_stocks("qqq")
+    results = await USMarketProvider().search_stocks("qqq")
 
     assert results[0].kind == "etf"
     assert results[0].name == "Invesco QQQ Trust Series 1"
@@ -206,27 +146,37 @@ async def test_search_classifies_etf_from_finmind_subsector(monkeypatch):
 
 async def test_search_still_returns_symbol_when_metadata_missing(monkeypatch):
     """有日線但 USStockInfo 查無 → 仍可加入自選，名稱退回代號。"""
-    from app.providers.market.yfinance_us import YFinanceProvider
+    from app.providers.market.us_market import USMarketProvider
 
-    _patch_lookup_rate_limited(monkeypatch)
     monkeypatch.setattr(finmind_us, "fetch_daily", lambda *a, **kw: _PRICED)
     monkeypatch.setattr(finmind_us, "fetch_stock_info", lambda s: None)
 
-    results = await YFinanceProvider().search_stocks("intc")
+    results = await USMarketProvider().search_stocks("intc")
 
     assert results[0].name == "INTC" and results[0].kind == "stock"
 
 
-async def test_search_reraises_rate_limit_when_finmind_also_empty(monkeypatch):
-    from app.core.exceptions import UpstreamError
-    from app.providers.market.yfinance_us import YFinanceProvider
+async def test_search_returns_empty_when_finmind_has_no_such_symbol(monkeypatch):
+    """查無代號回空清單；上游故障則另走 UpstreamError（見下），兩者不可混為一談。"""
+    from app.providers.market.us_market import USMarketProvider
 
-    _patch_lookup_rate_limited(monkeypatch)
     monkeypatch.setattr(finmind_us, "fetch_daily", lambda *a, **kw: pd.DataFrame())
 
-    # FinMind 查無且 yfinance 被限流 → 如實回報「限流」而非誤判成「查無」
-    with pytest.raises(UpstreamError, match="限流"):
-        await YFinanceProvider().search_stocks("ZZZZZZ")
+    assert await USMarketProvider().search_stocks("ZZZZZZ") == []
+
+
+async def test_search_upstream_failure_is_not_reported_as_unknown_symbol(monkeypatch):
+    """FinMind 故障不可偽裝成「查無此代號」——那會讓使用者以為代號打錯。"""
+    from app.core.exceptions import UpstreamError
+    from app.providers.market.us_market import USMarketProvider
+
+    def boom(*a, **kw):
+        raise RuntimeError("finmind down")
+
+    monkeypatch.setattr(finmind_us, "fetch_daily", boom)
+
+    with pytest.raises(UpstreamError):
+        await USMarketProvider().search_stocks("INTC")
 
 
 def test_fetch_stock_info_maps_etf_subsector(monkeypatch):

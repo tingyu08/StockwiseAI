@@ -34,7 +34,7 @@ class StockInfo:
 
 
 class MarketDataProvider(ABC):
-    """一個市場一組實作（TW: FinMind/TWSE、US: yfinance/Stooq）。"""
+    """一個市場一組實作（TW: FinMind/TWSE、US: FinMind）。"""
 
     market: str  # 'TW' | 'US'
 

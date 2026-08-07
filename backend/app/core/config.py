@@ -32,8 +32,8 @@ class Settings(BaseSettings):
 
     # --- optional ---
     openrouter_api_key: str = ""
-    # 美股盤中報價（哨兵停損用）。Yahoo 以 IP 信譽封鎖機房來源，
-    # 未設定時只能退回 yfinance，正式環境上等同停損失效。
+    # 美股盤中報價（哨兵停損用）的唯一來源——yfinance 備援已移除，
+    # 未設定時哨兵取不到任何美股報價，停損停利完全失效。
     finnhub_token: str = ""
     job_token: str = ""
     alert_webhook_url: str = ""

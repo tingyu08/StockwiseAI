@@ -11,10 +11,8 @@ from datetime import timedelta
 
 import httpx
 import pandas as pd
-import yfinance as yf
 
 from app.providers.market import finmind_us
-from app.providers.market.yf_cache import yfinance_guard
 from app.services.time_service import market_today
 
 logger = logging.getLogger(__name__)
@@ -37,14 +35,14 @@ class IndexQuote:
 
 
 def _load_daily(ticker: str) -> pd.DataFrame | None:
-    """FinMind 日線；失敗回 None 交由 _history 決定是否退 yfinance。
+    """FinMind 日線；失敗回 None（該指數本次簡報就從缺）。
 
     獨立成函式是為了讓 build_market_context 能平行預抓（見該處說明）。
     """
     try:
         return finmind_us.fetch_daily(ticker)
     except Exception as exc:
-        logger.warning("FinMind %s failed: %s（改試 yfinance）", ticker, exc)
+        logger.warning("FinMind %s failed: %s", ticker, exc)
         return None
 
 
@@ -53,8 +51,9 @@ def _history(
 ) -> pd.DataFrame | None:
     """近 N 日日線（含 Close/High/Low）。
 
-    FinMind 為主（官方 API，雲端 IP 不被限流）；查無或失敗才退 yfinance
-    （Yahoo 對機房 IP 常限流，實務上只在本機開發時派得上用場）。
+    唯一來源是 FinMind 官方 API（雲端 IP 不被限流）。曾以 yfinance 為備援，
+    已移除——Yahoo 對機房 IP 必定限流，那條路在正式環境從未成功過；
+    本模組用到的指數（^GSPC/^IXIC/^DJI/^SOX/^TWII）FinMind 全部涵蓋。
 
     raw_cache：FinMind 一律抓固定天數（與 period_days 無關），同一次簡報
     組裝內重用即可——美股的 ^GSPC 同時是全球指數也是本地大盤，沒有快取
@@ -67,23 +66,10 @@ def _history(
         df = _load_daily(ticker)
         if raw_cache is not None:
             raw_cache[ticker] = df
-    if df is not None and not df.empty:
-        return df.tail(period_days).set_index("Date")
-    if df is not None:
-        logger.warning("FinMind %s 查無資料（改試 yfinance）", ticker)
-    try:
-        # 序列化：預抓階段是平行的，而 yfinance 的時區快取（SQLite）
-        # 併發首次查詢會撞 database is locked（見 yf_cache._YF_LOCK）
-        with yfinance_guard():
-            hist = yf.Ticker(ticker).history(
-                period=f"{period_days}d", interval="1d", auto_adjust=False
-            )
-        if hist is not None and len(hist["Close"].dropna()) >= 2:
-            return hist
+    if df is None or df.empty:
+        logger.warning("FinMind %s 查無資料，本次簡報缺這項", ticker)
         return None
-    except Exception as exc:
-        logger.warning("yfinance fallback %s failed: %s", ticker, exc)
-        return None
+    return df.tail(period_days).set_index("Date")
 
 
 def _fetch_quote(

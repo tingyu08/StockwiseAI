@@ -1,11 +1,11 @@
 from app.core.exceptions import NotFoundError
 from app.providers.market.base import MarketDataProvider
 from app.providers.market.finmind import FinMindProvider
-from app.providers.market.yfinance_us import YFinanceProvider
+from app.providers.market.us_market import USMarketProvider
 
 _PROVIDERS: dict[str, MarketDataProvider] = {
     "TW": FinMindProvider(),
-    "US": YFinanceProvider(),
+    "US": USMarketProvider(),
 }
 
 

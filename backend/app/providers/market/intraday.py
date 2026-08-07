@@ -1,11 +1,10 @@
 """盤中即時報價（僅供出場哨兵使用，量小、免 key）。
 
 台股：證交所 mis.twse.com.tw 官方即時端點（上市 tse_ 與上櫃 otc_ 一次並查）
-美股：Finnhub 為主（API key 辨識，機房 IP 可用），yfinance 為備援
+美股：Finnhub（API key 辨識呼叫者，機房 IP 可用）
 抓不到的標的直接略過（回傳字典缺鍵），哨兵端視為「本輪不檢查」；
 若一檔都取不到，哨兵會讓該輪算失敗（見 sim/sentinel），不再靜默跳過。
 """
-import asyncio
 import logging
 
 import httpx
@@ -70,36 +69,14 @@ def _parse_price(raw: str | None) -> float | None:
 
 
 async def _us_quotes(symbols: list[str]) -> dict[str, float]:
-    """Finnhub 為主、yfinance 為備援。
+    """唯一來源為 Finnhub（API key 辨識呼叫者，機房 IP 可用）。
 
-    主從順序是刻意的：Yahoo 以 IP 信譽封鎖機房來源，正式環境曾整批取不到
-    報價、停損完全失效；Finnhub 以 API key 辨識呼叫者，不看 IP。
-    未設定 FINNHUB_TOKEN 時 fetch_quotes 回空字典，等於全數走 yfinance。
+    曾以 yfinance 作備援，但 Yahoo 以 IP 信譽封鎖機房來源，正式環境上
+    它是「必定失敗的備援」而非「偶爾失敗的備援」：2026-08-06 18:40 的
+    哨兵 5 檔全數退到 yfinance、全部收到 429，當輪停損停利完全失效，
+    還白花 5 次請求與數秒延遲。取不到就是取不到——哨兵那端已會如實
+    讓該輪算失敗（見 sim/sentinel），不需要一個只會粉飾的備援。
     """
     from app.providers.market import finnhub
 
-    quotes = await finnhub.fetch_quotes(symbols)
-    missing = [s for s in symbols if s not in quotes]
-    if missing:
-        quotes.update(await _us_quotes_via_yfinance(missing))
-    return quotes
-
-
-async def _us_quotes_via_yfinance(symbols: list[str]) -> dict[str, float]:
-    import yfinance as yf
-
-    from app.providers.market.yf_cache import yfinance_guard
-
-    def _one(symbol: str) -> float | None:
-        try:
-            # 序列化：yfinance 的時區快取是 SQLite，併發首次查詢會撞
-            # database is locked（見 yf_cache._YF_LOCK）
-            with yfinance_guard():
-                price = yf.Ticker(symbol).fast_info["last_price"]
-            return float(price) if price and price > 0 else None
-        except Exception as exc:
-            logger.warning("yfinance 即時報價 %s 失敗：%s", symbol, exc)
-            return None
-
-    results = await asyncio.gather(*(asyncio.to_thread(_one, s) for s in symbols))
-    return {s: p for s, p in zip(symbols, results) if p is not None}
+    return await finnhub.fetch_quotes(symbols)

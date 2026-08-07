@@ -39,7 +39,7 @@
 │  core/         設定、額度管理、節流器、logging                           │
 └────────────────────────────────┬───────────────────────────────────────┘
                                  │
-     SQLite（dev）/ PostgreSQL-Neon（cloud） ＋ 外部 API（FinMind/yfinance/Gemini）
+     SQLite（dev）/ PostgreSQL-Neon（cloud） ＋ 外部 API（FinMind/Finnhub/Gemini）
 ```
 
 ## 3. 後端詳細設計
@@ -68,7 +68,10 @@ backend/
 │   │   │   ├── base.py            # MarketDataProvider 介面
 │   │   │   ├── finmind.py         # 台股主源
 │   │   │   ├── twse.py            # 台股備援＋折溢價
-│   │   │   └── yfinance_us.py     # 美股（含 Stooq fallback）
+│   │   │   ├── us_market.py       # 美股日線/搜尋（FinMind）
+│   │   │   ├── finmind_us.py      # 美股與指數日線的 FinMind 客戶端
+│   │   │   ├── finnhub.py         # 美股盤中報價（哨兵用）
+│   │   │   └── intraday.py        # 盤中報價分派（TW: TWSE、US: Finnhub）
 │   │   └── ai/
 │   │       ├── base.py            # AIProvider 介面 + 降級鏈 Router
 │   │       ├── gemini.py          # flash-lite / 3.5-flash（response_schema）

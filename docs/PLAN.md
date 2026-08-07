@@ -68,7 +68,7 @@
 │ SQLite/      │ │ 外部資料源 │  │ AI Provider 層  │
 │ PostgreSQL   │ │ 台股:FinMind│ │ Gemini 免費額度  │
 │ (價格快取、   │ │  /TWSE API │ │ structured output│
-│  交易紀錄)    │ │ 美股:yfinance│ (備援，全雲端)   │
+│  交易紀錄)    │ │ 美股:FinMind │ (備援，全雲端)   │
 └──────────────┘ └───────────┘  └─────────────────┘
 ```
 
@@ -83,11 +83,11 @@
 | 部署 | 方案 A：本機 Docker Compose（預設）；方案 B：Vercel＋Render Free＋Neon＋GitHub Actions cron | 兩案皆 $0，見 [SD.md §6](docs/SD.md) |
 | AI | **Gemini API 免費額度**（`gemini-3.5-flash-lite` 批次主力、`gemini-3.6-flash` 深度分析），全雲端同一把 key；經 AI Provider 抽象層可隨時換供應商 | 免費、支援結構化輸出 |
 | 台股行情 | FinMind（免費有 API）＋ TWSE/TPEX OpenAPI（折溢價、官方資料） | 免費、涵蓋日線與基本面 |
-| 美股行情 | yfinance（日線、ETF NAV）＋ FinMind USStockPrice（備援） | 免費、雲端 IP 限流時可降級 |
+| 美股行情 | FinMind USStockPrice（日線、指數）＋ Finnhub（盤中報價） | 皆為官方 API，不受機房 IP 限流；yfinance 曾為主源，因 Yahoo 封鎖機房 IP 已移除 |
 | 排程 | APScheduler（每日收盤後更新資料、觸發 AI 模擬交易） | 輕量夠用 |
 
 ### 2.2 關鍵設計原則
-- **Market Provider 抽象**：`MarketDataProvider` 介面定義 `get_daily_prices() / get_etf_nav() / get_institutional_flows() / search_stocks()`，台股（FinMind/TWSE）與美股（yfinance）各自實作。所有市場差異（交易時間、幣別、漲跌幅限制、法人資料有無）封裝在 Provider 內，上層業務邏輯完全不分市場。
+- **Market Provider 抽象**：`MarketDataProvider` 介面定義 `get_daily_prices() / get_etf_nav() / get_institutional_flows() / search_stocks()`，台股（FinMind/TWSE）與美股（FinMind/Finnhub）各自實作。所有市場差異（交易時間、幣別、漲跌幅限制、法人資料有無）封裝在 Provider 內，上層業務邏輯完全不分市場。
 - **AI Provider 抽象**：`AIProvider` 介面定義 `analyze(context) -> StructuredReport`，實作 Gemini（3.1 Flash Lite / 3.5 Flash）；例行分析固定使用 Flash Lite，重要分析可降級至 Flash Lite。日後要換 Claude/OpenAI 只需新增實作。
 - **Repository Pattern**：所有資料存取（價格、交易、AI 報告）走抽象介面，儲存層可替換。
 - **統一 API 回應格式**：`{ success, data, error, meta }`。
@@ -269,7 +269,7 @@ watchlists       自選股清單
 
 | 風險 | 對策 |
 |------|------|
-| 免費資料源限流/斷供 | 全部落地快取；資料源抽象成 Provider 介面，可替換（台股 FinMind ↔ TWSE；美股 yfinance ↔ Stooq）；yfinance 為非官方爬蟲，介面偶爾失效，需鎖版本＋監控 |
+| 免費資料源限流/斷供 | 全部落地快取；資料源抽象成 Provider 介面，可替換（台股 FinMind ↔ TWSE；美股 FinMind + Finnhub）；已棄用非官方爬蟲來源（yfinance），改採官方 API，不再受機房 IP 信譽影響 |
 | Gemini 免費額度不足/限流 | 節流器對齊各模型實際額度；分析快取（同一天同一檔不重跑）；例行分析明確失敗，重要分析只降級至 Flash Lite；用量儀表板 |
 | Google 免費層政策再變動（2025/12 已大砍過一次） | 額度數字放設定檔不寫死；報告標示產生模型；Provider 抽象層可快速切換供應商 |
 | AI 建議品質不穩 | Prompt 版本化＋模擬交易績效即品質回饋迴路；回測驗證 |
