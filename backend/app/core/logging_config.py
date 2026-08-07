@@ -7,10 +7,13 @@ from app.core.config import Settings
 
 
 def _secrets(settings: Settings) -> tuple[str, ...]:
+    # 新增憑證設定時，這裡務必一起加：漏掉一個就等於它全程明文寫進 log。
+    # finnhub_token 曾遺漏，正式環境的 access log 因此留下整串明文金鑰。
     values = (
         settings.gemini_api_key,
         settings.finmind_token,
         settings.openrouter_api_key,
+        settings.finnhub_token,
         settings.job_token,
         settings.alert_webhook_url,
     )

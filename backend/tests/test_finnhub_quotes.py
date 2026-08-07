@@ -23,11 +23,23 @@ class _Resp:
         return self._payload
 
 
-def _patch_client(monkeypatch, by_symbol):
-    """by_symbol: symbol -> _Resp 或例外實例。"""
+def _patch_client(monkeypatch, by_symbol, *, capture=None):
+    """by_symbol: symbol -> _Resp／例外實例／上述之 list（依序回應，用於重試）。
+
+    capture 傳入 dict 時，會記下 AsyncClient 的建構參數與每次 get 的 params，
+    供「token 不得出現在 URL」這類契約斷言使用。
+    """
     requested = []
+    sequences = {
+        symbol: list(outcome) if isinstance(outcome, list) else None
+        for symbol, outcome in by_symbol.items()
+    }
 
     class Client:
+        def __init__(self, kwargs):
+            if capture is not None:
+                capture["client_kwargs"] = kwargs
+
         async def __aenter__(self):
             return self
 
@@ -37,12 +49,20 @@ def _patch_client(monkeypatch, by_symbol):
         async def get(self, url, params=None):
             symbol = (params or {}).get("symbol")
             requested.append(symbol)
-            outcome = by_symbol.get(symbol, _Resp(200, {"c": 0}))
+            if capture is not None:
+                capture.setdefault("params", []).append(params or {})
+            queue = sequences.get(symbol)
+            if queue:
+                outcome = queue.pop(0)
+            else:
+                outcome = by_symbol.get(symbol, _Resp(200, {"c": 0}))
+                if isinstance(outcome, list):  # 序列已用盡 → 沿用最後一個結果
+                    outcome = outcome[-1]
             if isinstance(outcome, Exception):
                 raise outcome
             return outcome
 
-    monkeypatch.setattr(finnhub.httpx, "AsyncClient", lambda **kw: Client())
+    monkeypatch.setattr(finnhub.httpx, "AsyncClient", lambda **kw: Client(kw))
     return requested
 
 
@@ -97,6 +117,114 @@ async def test_empty_symbol_list_short_circuits(monkeypatch):
     requested = _patch_client(monkeypatch, {})
     assert await finnhub.fetch_quotes([]) == {}
     assert requested == []
+
+
+# ---- 憑證不得外洩到 log ----
+
+
+async def test_token_travels_in_header_never_in_the_url(monkeypatch):
+    """token 走 header。
+
+    query string 會被 httpx 的 INFO log、反向代理與平台 access log 原樣記下：
+    2026-08-06 的正式環境 log 就有整串 token 明文（見 finnhubio/Finnhub-API#301）。
+    """
+    capture: dict = {}
+    _patch_client(monkeypatch, {"AAPL": _Resp(200, {"c": 1.5})}, capture=capture)
+
+    await finnhub.fetch_quotes(["AAPL"])
+
+    headers = capture["client_kwargs"]["headers"]
+    assert headers["X-Finnhub-Token"] == "test-finnhub-token"
+    for params in capture["params"]:
+        assert "token" not in params, f"token 仍在 query string：{params}"
+
+
+def test_finnhub_token_is_redacted_from_logs():
+    """防禦深度：萬一有其他路徑印出 token，遮蔽層要接得住。
+
+    原本 _secrets() 漏了 finnhub_token——FinMind 的 token 在 log 裡是
+    [REDACTED]，Finnhub 的卻是明文，正是這個遺漏造成的。
+    """
+    from app.core.logging_config import redact_sensitive
+
+    settings = get_settings()
+    token = "d9lbnlpr01qlqi02cn30"
+    object.__setattr__(settings, "finnhub_token", token)
+    try:
+        message = f"GET https://finnhub.io/api/v1/quote?symbol=TSM&token={token}"
+        assert token not in redact_sensitive(message, settings)
+    finally:
+        object.__setattr__(settings, "finnhub_token", "test-finnhub-token")
+
+
+# ---- 暫時性故障的韌性與可診斷性 ----
+
+
+async def test_timeout_is_retried_before_falling_back(monkeypatch):
+    """逾時重試一次再放棄。
+
+    主來源一次逾時就整批掉到 yfinance，而 Yahoo 對機房 IP 回 429——
+    2026-08-06 18:40 的哨兵就是這樣「5 檔持倉全滅」。
+    """
+    slept = []
+
+    async def no_sleep(seconds):
+        slept.append(seconds)
+
+    monkeypatch.setattr(finnhub, "_sleep", no_sleep, raising=False)
+    requested = _patch_client(
+        monkeypatch,
+        {"AAPL": [httpx.ReadTimeout(""), _Resp(200, {"c": 261.74})]},
+    )
+
+    assert await finnhub.fetch_quotes(["AAPL"]) == {"AAPL": 261.74}
+    assert requested == ["AAPL", "AAPL"], "逾時後沒有重試"
+    assert slept, "重試之前沒有退避"
+
+
+async def test_repeated_timeout_gives_up_without_killing_the_batch(monkeypatch):
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(finnhub, "_sleep", no_sleep, raising=False)
+    _patch_client(
+        monkeypatch,
+        {
+            "AAPL": [httpx.ReadTimeout(""), httpx.ReadTimeout("")],
+            "MSFT": _Resp(200, {"c": 502.1}),
+        },
+    )
+
+    assert await finnhub.fetch_quotes(["AAPL", "MSFT"]) == {"MSFT": 502.1}
+
+
+async def test_connect_error_is_not_retried(monkeypatch):
+    """連線被拒是確定性失敗，重試只是拖慢哨兵——逾時才值得再試一次。"""
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(finnhub, "_sleep", no_sleep, raising=False)
+    requested = _patch_client(monkeypatch, {"AAPL": httpx.ConnectError("refused")})
+
+    assert await finnhub.fetch_quotes(["AAPL"]) == {}
+    assert requested == ["AAPL"]
+
+
+async def test_failure_log_names_the_exception_type(monkeypatch, caplog):
+    """httpx 的逾時例外 str() 是空字串，只印 exc 會得到「連線失敗：」。
+
+    正式環境的 log 正是如此——完全看不出是逾時、連線被拒還是 TLS 失敗。
+    """
+    async def no_sleep(_seconds):
+        return None
+
+    monkeypatch.setattr(finnhub, "_sleep", no_sleep, raising=False)
+    _patch_client(monkeypatch, {"AAPL": httpx.ReadTimeout("")})
+
+    with caplog.at_level("WARNING", logger="app.providers.market.finnhub"):
+        await finnhub.fetch_quotes(["AAPL"])
+
+    assert "ReadTimeout" in caplog.text
 
 
 # ---- 與 yfinance 的主從關係 ----
