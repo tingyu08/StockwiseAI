@@ -2,7 +2,7 @@
 
 > 專案代號：`stock-ai-advisor`
 > 目標市場：台股＋美股雙市場（前端 Radio Button 切換，含 ETF）
-> AI 方案：全免費雲端（Gemini 3.1 Flash Lite ＋ Gemini 3.5 Flash ＋ Antigravity，不用本地模型）
+> AI 方案：全免費雲端（Gemini `3.5-flash-lite` 例行批次＋`3.6-flash` 重要任務，不用本地模型）
 > 核心價值：AI 驅動的個股分析、策略建議、走勢預測、模擬買賣、多股報酬率與折溢價比較
 > **狀態：Phase 0–5 全數完成，已於 2026-07 依方案 B 上線（Render＋Neon＋Vercel＋GitHub Actions，$0）**
 
@@ -127,10 +127,23 @@ watchlists       自選股清單
 | **Gemini 3.6 Flash**（重要決策） | `gemini-3.6-flash` | 本帳號實測：**5 RPM / 250K TPM / 20 RPD** | 優先用於單檔深度分析、每日簡報總結與模擬交易分析；額度盡或上游失敗時，後兩者自動降級 |
 | **Antigravity Agent**（研究型任務） | `antigravity-preview-05-2026`（Interactions API，底層 Gemini 3.5 Flash） | 免費層 60 RPM / 100K TPM / 100 RPD | 自帶沙箱＋Google 搜尋＋URL 抓取＋程式碼執行的託管 agent，適合「個股新聞/事件研究」這種需要自己上網查資料的任務；**不支援 structured output、不支援 temperature 等參數、preview 狀態隨時可能變動**，故不當主分析管線 |
 
-**Antigravity 的定位（分工）**：
+**Antigravity 的定位（分工）**（⚠️ 已於 2026-08-04 移除，見本節末）：
 - 主分析管線（技術面/籌碼面 → 結構化報告）維持用 Gemini（flash-lite/3.5-flash）的 `response_schema`——因為模擬交易引擎必須吃到可靠的 JSON，Antigravity 明確不支援 structured output，只能 prompt 要求 JSON 再解析，可靠度不足以驅動自動下單。
 - Antigravity 負責 P2 的「新聞面研究」模組：每日對自選股跑一次「搜尋近期新聞與重大事件並摘要」，它能自己上網省掉我們串新聞 API；輸出以自由文字存入 `ai_reports`，再由 Gemini 主管線把摘要納入分析輸入。100 RPD 對這種每日批次綽綽有餘。
 - Preview 期間沙箱運算不計費，但 agent 每次任務 token 消耗遠大於單次 generateContent，需納入用量記錄；GA 後若改計價策略，Provider 抽象層可直接停用。
+
+> **⚠️ 上述 Antigravity 分工已於 2026-08-04 全數移除，保留於此僅作決策沿革。**
+>
+> 直接原因：`google_search` 接地額度在本帳號對所有一般 Gemini 模型皆回 429，
+> 而 Antigravity 的任務結果讀不回來（輪詢拿不到內容），等於「AI 有在搜尋但我們
+> 讀不到」。實測確認的能力邊界是：**純文字生成可用、給定網址的讀取可用、
+> 自主搜尋不可用**。
+>
+> 現行做法（方案 B）：**系統自己抓新聞標題**（台股 FinMind `TaiwanStockNews`、
+> 美股 Finnhub `company-news`，兩者皆失敗才退 Google News RSS），**再交
+> `gemini-3.5-flash-lite` 做結構化摘要**。出處與網址由系統提供，prompt 明令
+> 原樣沿用——這是舊架構做不到的：以前 AI 自己上網，出處也是它自己講的，
+> 無從驗證真偽。
 
 **配額策略（依儀表板實測額度設計）**：
 1. **批次分析**：一次請求分析多檔股票（structured output 回傳陣列，每批 4 檔）。30 檔託管清單每日約需 8 個例行請求（TPM 250K 足以容納每批輸入資料）
@@ -150,7 +163,7 @@ watchlists       自選股清單
 | 例行批次分析（30 檔，批次化） | 3.1 Flash Lite | ~8 | 500 RPD | 62 倍 |
 | 模擬交易批次＋每日簡報總結 | 3.5 Flash（可降級） | ~5 | 20 RPD | 約 4 倍 |
 | 單檔深度分析（個股頁觸發，含快取） | 3.5 Flash | ~5–10 | 20 RPD | 2~4 倍 |
-| 新聞/事件研究 | Antigravity | ~10–30 | 100 RPD（獨立額度） | 3~10 倍 |
+| 新聞/事件研究 | `gemini-3.5-flash-lite`（只做摘要，新聞由系統抓） | ~10–30 | 併入 flash-lite 的 500 RPD | 3~10 倍 |
 
 
 ### 4.1 AI 分析管線
@@ -161,7 +174,7 @@ watchlists       自選股清單
    - 近 120 日 OHLCV 摘要＋技術指標現值與趨勢
    - 台股：三大法人買賣超（FinMind）；美股：改用成交量趨勢與 52 週高低點位置（無法人資料）
    - ETF 加上折溢價現況
-   - （P2）近期新聞與事件摘要——由 Antigravity Agent 每日自主搜尋產出（見 4.0），免串新聞 API
+   - （P2）近期新聞與事件摘要——系統抓新聞標題後交 AI 摘要（見 4.0），出處由系統提供，AI 不得虛構
 2. **Prompt 設計**：
    - System prompt 定義角色（量化分析師）、輸出 JSON schema、免責立場
    - Prompt 版本化（`prompt_version` 存 DB），方便迭代比較品質

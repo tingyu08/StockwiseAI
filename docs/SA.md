@@ -38,7 +38,7 @@ UC-10 查看預測走勢    個股圖上疊加量化預測區間帶＋AI 三情�
 UC-B1 (排程)每日資料更新   收盤後抓日線/法人/NAV → 算指標 → 算折溢價
 UC-B2 (排程)每日 AI 批次   flash-lite 批次分析託管清單 → 產生報告
 UC-B3 (排程)AI 模擬下單    3.5 優先產生交易報告（可降級）＋風控規則產生模擬委託 → 隔日開盤價成交
-UC-B4 (排程)新聞研究       Antigravity 對自選股搜尋近期新聞產出摘要
+UC-B4 (排程)新聞研究       系統抓近 7 日新聞標題 → AI 摘要（出處由系統提供，AI 不得虛構）
 ```
 
 ## 4. 功能需求（FR）
@@ -81,7 +81,7 @@ UC-B4 (排程)新聞研究       Antigravity 對自選股搜尋近期新聞產�
 | FinMind USStockPrice/USStockInfo | 美股日線、名稱與 ETF 分類、全球指數 | 與台股共用 token 額度 | 無（yfinance 已移除，見下） |
 | Finnhub `/quote` | 美股盤中報價（出場哨兵） | 免費層 60 req/分鐘 | 無——取不到即該輪哨兵如實失敗 |
 | Gemini API | AI 分析（3.1 Flash Lite 500 RPD／3.5 Flash 20 RPD） | 額度依帳號儀表板 | 例行分析只用 Flash Lite；重要分析可由 3.5 降級至 Flash Lite |
-| Antigravity（Interactions API） | 新聞/事件研究 | 100 RPD | 跳過該日新聞面 |
+| FinMind TaiwanStockNews／Finnhub company-news | 新聞標題來源（AI 只做摘要） | 與各自 token 額度共用 | Google News RSS（免金鑰） |
 
 ## 7. 限制與假設
 

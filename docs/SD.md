@@ -72,12 +72,11 @@ backend/
 │   │   │   ├── finmind_us.py      # 美股與指數日線的 FinMind 客戶端
 │   │   │   ├── finnhub.py         # 美股盤中報價（哨兵用）
 │   │   │   └── intraday.py        # 盤中報價分派（TW: TWSE、US: Finnhub）
-│   │   └── ai/
-│   │       ├── base.py            # AIProvider 介面 + 降級鏈 Router
-│   │       ├── gemini.py          # flash-lite / 3.5-flash（response_schema）
-│   │       ├── gemini.py          # Gemini structured output provider
-│   │       ├── antigravity.py     # Interactions API（新聞研究）
-│   │       └── schemas.py         # AnalysisReport 等 Pydantic 輸出模型
+│   │   ├── ai/
+│   │   │   ├── base.py            # AIProvider 介面 + 降級鏈 Router
+│   │   │   ├── gemini.py          # flash-lite / 3.6-flash（response_schema）
+│   │   │   └── schemas.py         # AnalysisReport 等 Pydantic 輸出模型
+│   │   └── news_feed.py           # 新聞標題來源（TW: FinMind、US: Finnhub、備援 RSS）
 │   ├── services/
 │   │   ├── indicator_service.py   # MA/KD/MACD/RSI/布林（純函式、無 IO）
 │   │   ├── analysis_service.py    # 輸入組裝→AI→驗證→落地（含當日快取）
@@ -106,7 +105,7 @@ backend/
 | GET | `/api/v1/stocks/{symbol}/analysis` | 當日 AI 報告（無則回 404，前端顯示「尚未分析」） |
 | POST | `/api/v1/stocks/{symbol}/analysis:routine` | 觸發例行分析（當日快取） |
 | POST | `/api/v1/stocks/{symbol}/analysis:deep` | 觸發深度分析（3.5 Flash，檢查額度後執行） |
-| GET/POST | `/api/v1/stocks/{symbol}/news[:run]` | 讀取／背景觸發 Antigravity 新聞研究；POST 回傳 `run_id` |
+| GET/POST | `/api/v1/stocks/{symbol}/news[:run]` | 讀取／背景觸發新聞研究（系統抓標題→AI 摘要）；POST 回傳 `run_id` |
 | POST | `/api/v1/analysis/overview:run` | 背景產生每日簡報（3.5 優先、可降級），回傳 `run_id` |
 | GET | `/api/v1/jobs/runs/{run_id}` | 輪詢背景工作的狀態、結果或錯誤 |
 | GET | `/api/v1/stocks/{symbol}/predictions` | 預測區間帶 |
@@ -257,7 +256,8 @@ frontend/
         → 15:15 交易分析(3.5 優先)並產生委託(UC-B3, pending) → 次日 09:05 以開盤價成交
 美股日：台灣時間 05:30 資料更新 → 06:00 AI批次 → 06:15 交易分析並產生委託
         → 美股次日開盤後成交
-每  日：07:00 Antigravity 新聞研究(UC-B4, 自選股逐檔, ≤30 請求)
+新  聞：台股 06:10 / 美股 19:40 新聞研究(UC-B4, 託管清單逐檔)
+        系統抓新聞標題（FinMind/Finnhub，備援 Google News RSS）交 AI 摘要
 失敗處理：每步獨立 try/except＋log；資料更新失敗則跳過當日 AI 批次（避免用舊資料決策）
 ```
 
