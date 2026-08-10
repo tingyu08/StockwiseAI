@@ -8,7 +8,7 @@
 - 事件溯源：orders 一經 filled/rejected 不再變更；持倉由重放推導
 """
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, time, timedelta, timezone
 
 from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
@@ -45,6 +45,25 @@ def get_or_create_account(db: Session, market: str) -> SimAccount:
         db.commit()
         db.refresh(account)
     return account
+
+
+def market_open_utc(session_day: date, market: str) -> datetime:
+    """該交易日「當地開盤時刻」換算成 naive UTC。
+
+    存進 DB 的時間欄位一律是 naive UTC（見 time_service.utc_now_naive），
+    filled_at 也不例外。原本寫的是 `datetime.combine(交易日, 00:00)`——
+    既不是 UTC 也不是明確的當地時刻，而 sentinel 在同一欄位寫的是真正的
+    UTC 時刻，一個欄位兩種語意，畫面只好退到「只顯示日期」。
+
+    用 zoneinfo 換算而非寫死偏移：美東有夏令時間，寫死會在換季後錯一小時。
+    兩個市場的開盤換算後都落在 UTC 同一日（台股 01:00、美股 13:30/14:30），
+    所以權益曲線用 filled_at.date() 歸屬每日損益仍然正確。
+    """
+    hour, minute = MARKET_OPEN[market]
+    local = datetime.combine(session_day, time(hour, minute)).replace(
+        tzinfo=MARKET_TIMEZONES[market]
+    )
+    return local.astimezone(timezone.utc).replace(tzinfo=None)
 
 
 def tw_tax_rate(is_etf: bool) -> float:
@@ -149,7 +168,7 @@ def fill_pending_orders(db: Session, market: str) -> dict:
         order.fill_price = open_price
         order.fee = fee
         order.status = "filled"
-        order.filled_at = datetime.combine(price_row.date, datetime.min.time())
+        order.filled_at = market_open_utc(price_row.date, market)
         delta = qty if order.side == "buy" else -qty
         positions[stock.id] = round(positions.get(stock.id, 0.0) + delta, 4)
         filled += 1

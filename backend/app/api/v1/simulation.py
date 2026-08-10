@@ -15,6 +15,7 @@ from app.services.sim.portfolio import (
     realized_pnl_by_order,
 )
 from app.services.job_service import enqueue_job
+from app.services.time_service import as_utc_iso
 
 router = APIRouter(tags=["simulation"])
 
@@ -103,8 +104,10 @@ def orders_view(market: Market, db: Session = Depends(get_db)) -> Envelope:
                 "decided_by": order.decided_by,
                 "fill_kind": order.fill_kind,
                 "reject_reason": order.reject_reason,
-                "created_at": order.created_at.isoformat() if order.created_at else None,
-                "filled_at": order.filled_at.isoformat() if order.filled_at else None,
+                # 走 as_utc_iso 才會帶 Z：少了時區標記，瀏覽器的 new Date()
+                # 會把字串當本地時間解讀，對台灣就整整差 8 小時
+                "created_at": as_utc_iso(order.created_at),
+                "filled_at": as_utc_iso(order.filled_at),
                 "ai_report": json.loads(report.payload_json) if report else None,
             }
         )

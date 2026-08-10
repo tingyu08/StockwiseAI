@@ -27,3 +27,44 @@ export function formatRunTimeFull(iso: string | null | undefined): string | unde
   if (Number.isNaN(at.getTime())) return undefined;
   return at.toLocaleString();
 }
+
+const MARKET_TIMEZONES: Record<string, string> = {
+  tw: "Asia/Taipei",
+  us: "America/New_York",
+};
+
+/** 市場當地時間「YYYY-MM-DD HH:mm」。無值或無法解析回傳 null。
+ *
+ * 交易時刻要用市場所在時區看才有意義：台股成交寫 01:00Z，在台北就是開盤的
+ * 09:00；美股寫 13:30Z，在紐約就是開盤的 09:30。改用瀏覽器時區的話，人在
+ * 台灣看美股單會顯示 21:30，跟「開盤成交」對不起來。
+ *
+ * 這與 formatRunTime 的分工是刻意的：排程執行時間問的是「我這邊幾點跑的」，
+ * 用瀏覽器時區；交易時刻問的是「在那個市場的第幾分鐘成交」，用市場時區。
+ */
+export function formatMarketTime(
+  iso: string | null | undefined,
+  market: string,
+): string | null {
+  if (!iso) return null;
+  // 後端一律送帶 Z 的 ISO（見 time_service.as_utc_iso）。萬一少了標記，
+  // new Date() 會當本地時間解讀——對台灣就整整差 8 小時，故補上。
+  const normalized = /[Zz]|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : `${iso}Z`;
+  const at = new Date(normalized);
+  if (Number.isNaN(at.getTime())) return null;
+
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: MARKET_TIMEZONES[market] ?? "UTC",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(at);
+  const get = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((p) => p.type === type)?.value ?? "";
+  // hour12:false 在部分執行環境會把午夜給成 "24"
+  const hour = get("hour") === "24" ? "00" : get("hour");
+  return `${get("year")}-${get("month")}-${get("day")} ${hour}:${get("minute")}`;
+}

@@ -92,6 +92,19 @@ describe("交易日誌列", () => {
     expect(screen.getByText(/-10\.58%/)).toBeInTheDocument();
   });
 
+  it("成交時刻以市場當地時區顯示，並標明是哪個市場的時間", () => {
+    // 台股 01:00Z ＝ 台北 09:00（開盤）
+    row({ created_at: "2026-08-04T23:10:00Z", filled_at: "2026-08-05T01:00:00Z" });
+    fireEvent.click(screen.getByRole("button"));
+
+    const line = screen.getByText(/建立/);
+    expect(line).toHaveTextContent("成交 2026-08-05 09:00");
+    // 沒有標註的話，讀者無從判斷這是自己的時區還是市場的
+    expect(line).toHaveTextContent("台北時間");
+    // 舊版只顯示日期、且直接切字串（等同顯示 UTC）
+    expect(line).not.toHaveTextContent("01:00");
+  });
+
   it("未成交不顯示任何金額——填 0 會被讀成不用錢", () => {
     row({
       status: "pending",

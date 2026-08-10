@@ -3,9 +3,11 @@
 import { useState } from "react";
 
 import type { SimOrderView } from "@/hooks/use-simulation";
+import { formatMarketTime } from "@/lib/datetime";
 import { useMarketStore } from "@/stores/market";
 
 const STATUS_LABEL = { pending: "待成交", filled: "已成交", rejected: "已拒絕" } as const;
+const MARKET_TZ_LABEL: Record<string, string> = { tw: "台北", us: "紐約" };
 
 const money = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 2 });
 const signed = (v: number) => `${v >= 0 ? "+" : ""}${money(v)}`;
@@ -123,9 +125,13 @@ export function SimOrderRow({ order }: { order: SimOrderView }) {
           ) : (
             <p>停損觸發或無報告連結。</p>
           )}
+          {/* 時刻一律以市場當地時區顯示（見 lib/datetime.formatMarketTime）：
+              台股成交的 01:00Z 在台北就是開盤的 09:00，用瀏覽器時區看美股
+              會變成 21:30，跟「開盤成交」對不起來 */}
           <p className="mt-1 text-neutral-400">
-            建立 {order.created_at?.slice(0, 16).replace("T", " ")}
-            {order.filled_at && `｜成交 ${order.filled_at.slice(0, 10)}`}
+            建立 {formatMarketTime(order.created_at, market) ?? "—"}
+            {order.filled_at && `｜成交 ${formatMarketTime(order.filled_at, market)}`}
+            {` （${MARKET_TZ_LABEL[market] ?? ""}時間）`}
           </p>
         </div>
       )}
