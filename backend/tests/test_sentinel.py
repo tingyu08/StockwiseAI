@@ -334,8 +334,12 @@ def test_pre_open_order_fills_at_same_day_open(client):
             last_price.date.year, last_price.date.month, last_price.date.day,
             7, 30, tzinfo=ZoneInfo("Asia/Taipei"),
         )
+        cash_before = float(account.cash)
+        account.cash = 100_000.0  # 不依賴其他測試留下的餘額
+        db.commit()
         order = SimOrder(
-            account_id=account.id, stock_id=stock.id, side="buy", qty=10,
+            # 150 × 100 ＝ 15,000，跨過台股的委託金額下限
+            account_id=account.id, stock_id=stock.id, side="buy", qty=150,
             status="pending", decided_by="ai",
             created_at=pre_open_local.astimezone(timezone.utc).replace(tzinfo=None),
         )
@@ -347,6 +351,8 @@ def test_pre_open_order_fills_at_same_day_open(client):
         db.refresh(order)
         assert result["filled"] >= 1
         assert order.status == "filled"
+        account.cash = cash_before  # 現金共用，改動必須還原
+        db.commit()
         assert float(order.fill_price) == float(last_price.open)  # 當日開盤，非隔日
     finally:
         db.close()

@@ -31,9 +31,24 @@ def _clean_up_own_orders():
     重放推導——留下訂單會讓 test_simulation 的重放結果對不上，
     而那種失敗看起來會像是「權益曲線算錯」，極難追。
     """
-    yield
     db = SessionLocal()
     try:
+        cash_before = {
+            market: float(get_or_create_account(db, market).cash)
+            for market in ("TW", "US")
+        }
+    finally:
+        db.close()
+
+    yield
+
+    db = SessionLocal()
+    try:
+        # 現金是全域共用的：不還原會讓後續測試的部位大小計算整個走樣，
+        # 失敗現象卻是「AI 沒有下單」，看起來完全不像時間戳測試造成的
+        for market, amount in cash_before.items():
+            get_or_create_account(db, market).cash = amount
+        db.commit()
         ids = [
             row.id
             for row in db.execute(
@@ -65,9 +80,9 @@ def _stock_with_price(db, symbol, market, session_day, price=100.0):
     return stock
 
 
-def _pending_buy(db, account, stock, created_at):
+def _pending_buy(db, account, stock, created_at, qty=1):
     order = SimOrder(
-        account_id=account.id, stock_id=stock.id, side="buy", qty=1,
+        account_id=account.id, stock_id=stock.id, side="buy", qty=qty,
         status="pending", decided_by="ai", created_at=created_at,
     )
     db.add(order)
@@ -83,7 +98,10 @@ def test_tw_fill_is_stamped_at_local_open_in_utc():
     try:
         account = get_or_create_account(db, "TW")
         stock = _stock_with_price(db, "TS001", "TW", session_day)
-        order = _pending_buy(db, account, stock, datetime(2026, 7, 14, 23, 10))
+        account.cash = 100_000.0  # 不依賴其他測試留下的餘額
+        db.commit()
+        # 150 × 100 ＝ 15,000，跨過台股的委託金額下限（見 test_min_order_value）
+        order = _pending_buy(db, account, stock, datetime(2026, 7, 14, 23, 10), qty=150)
 
         fill_pending_orders(db, "TW")
 

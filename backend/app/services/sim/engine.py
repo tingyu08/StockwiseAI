@@ -26,6 +26,12 @@ MARKET_OPEN = {"TW": (9, 0), "US": (9, 30)}  # 當地開盤時間
 
 TW_FEE_RATE = 0.001425
 TW_FEE_MIN = 20.0
+# 買進的最低委託金額。台股的手續費有 20 元下限，金額越小費率越誇張：
+# 正式環境曾對 00981A 買進 1 股（28.92 元）卻照收 20 元，手續費佔成交金額
+# 69%，成本均價被推到 48.92，一買進就浮虧 41%，與行情完全無關。
+# 10,000 元讓最低手續費壓在 0.2% 以內（見 test_min_order_value）。
+# 美股手續費為 0，小額單沒有成本劣勢，故不設限。
+MIN_ORDER_VALUE = {"TW": 10_000.0, "US": 0.0}
 TW_TAX_RATE = 0.003  # 賣出證交稅（個股）
 TW_ETF_TAX_RATE = 0.001  # 賣出證交稅（受益憑證/ETF）——為個股的 1/3
 
@@ -64,6 +70,14 @@ def market_open_utc(session_day: date, market: str) -> datetime:
         tzinfo=MARKET_TIMEZONES[market]
     )
     return local.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def meets_min_order_value(market: str, gross: float) -> bool:
+    """買進金額是否達到下限。
+
+    只約束買進：擋住賣出等於把零股永遠鎖在帳上，停損更不能被金額卡住。
+    """
+    return gross + 1e-9 >= MIN_ORDER_VALUE.get(market, 0.0)
 
 
 def tw_tax_rate(is_etf: bool) -> float:
@@ -152,6 +166,16 @@ def fill_pending_orders(db: Session, market: str) -> dict:
                 rejected += 1
                 continue
             gross = qty * open_price
+            # 決策用昨收估價，開盤跳空時上面會縮量——縮到剩幾股的話成交金額
+            # 可能只剩幾百元，手續費照收 20 元。只在決策端擋等於留了後門。
+            if not meets_min_order_value(market, gross):
+                _reject(
+                    order,
+                    f"縮量後委託金額 {gross:,.0f} 低於下限 "
+                    f"{MIN_ORDER_VALUE[market]:,.0f}（手續費佔比過高）",
+                )
+                rejected += 1
+                continue
             fee = calc_fee(market, "buy", gross, is_etf=stock.kind == "etf")
             account.cash = float(account.cash) - gross - fee
         else:

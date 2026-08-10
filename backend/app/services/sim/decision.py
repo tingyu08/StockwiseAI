@@ -14,7 +14,12 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import AiReport, DailyPrice, SimOrder, Stock, WatchlistItem
-from app.services.sim.engine import calc_fee, get_or_create_account
+from app.services.sim.engine import (
+    MIN_ORDER_VALUE,
+    calc_fee,
+    get_or_create_account,
+    meets_min_order_value,
+)
 from app.services.sim.portfolio import current_positions
 from app.services.time_service import utc_now_naive
 from app.services.trading_calendar import last_trading_session
@@ -114,6 +119,17 @@ def run_decisions(db: Session, market: str) -> dict:
             )
             continue
         gross = qty * last_close
+        # 小額單會被最低手續費吃掉（台股 20 元下限），還佔用現金與持倉名額。
+        # 正式環境曾買進 1 股 28.92 元卻付 20 元手續費，一成交就浮虧 41%。
+        if not meets_min_order_value(market, gross):
+            skipped.append({
+                "symbol": stock.symbol,
+                "reason": (
+                    f"可買金額 {gross:,.0f} 低於下限 "
+                    f"{MIN_ORDER_VALUE[market]:,.0f}（手續費佔比過高）"
+                ),
+            })
+            continue
         available_cash -= gross + calc_fee(market, "buy", gross)
         db.add(_make_order(account.id, stock.id, "buy", qty, report.id))
         created.append({"symbol": stock.symbol, "side": "buy", "qty": qty})
