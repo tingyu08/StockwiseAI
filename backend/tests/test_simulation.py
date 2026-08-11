@@ -255,10 +255,12 @@ def test_pending_order_can_be_claimed_only_once(client):
         )
         db.add(order)
         db.commit()
-        claim = getattr(sim_engine, "_claim_pending_order", lambda *_: False)
+        claim = getattr(sim_engine, "_claim_pending_order", lambda *_: None)
 
-        assert claim(db, order.id) is True
-        assert claim(db, order.id) is False
+        # 搶到時回傳租約起算時刻（供 filling_since 用），搶不到回 None
+        first = claim(db, order.id)
+        assert first is not None
+        assert claim(db, order.id) is None
     finally:
         db.rollback()
         db.close()

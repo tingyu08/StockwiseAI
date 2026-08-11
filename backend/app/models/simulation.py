@@ -47,3 +47,8 @@ class SimOrder(Base):
     fill_kind: Mapped[str | None] = mapped_column(String(16))
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     filled_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # 'filling' 的租約起算時刻。撮合中斷（容器重啟等）會讓訂單永久卡在
+    # filling——所有撿單的查詢都只看 pending，沒人會再碰它。有了租約才能
+    # 分辨「另一個流程正在處理」與「孤兒」：手動撮合不經 job queue，
+    # 與排程並行是可能的，不可無條件回收。
+    filling_since: Mapped[datetime | None] = mapped_column(DateTime)

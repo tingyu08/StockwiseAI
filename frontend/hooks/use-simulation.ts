@@ -51,7 +51,8 @@ export interface SimOrderView {
   avg_cost: number | null;
   realized_pnl: number | null;
   realized_pnl_pct: number | null;
-  status: "pending" | "filled" | "rejected";
+  /** filling＝撮合中的暫態。型別漏了它，畫面就會靜靜顯示空白 */
+  status: "pending" | "filling" | "filled" | "rejected";
   decided_by: string;
   fill_kind: "stop_loss" | "take_profit" | null;
   reject_reason: string | null;

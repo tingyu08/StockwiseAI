@@ -85,6 +85,13 @@ describe("交易日誌列", () => {
     expect(screen.queryByText("已實現損益")).not.toBeInTheDocument();
   });
 
+  it("撮合中的訂單要有狀態文字，不可顯示空白", () => {
+    // 正式環境曾有兩筆卡在 filling 一個月，畫面上完全看不出異常
+    row({ status: "filling", fill_price: null, gross_amount: null, net_amount: null });
+
+    expect(screen.getByText("撮合中")).toBeInTheDocument();
+  });
+
   it("虧損顯示負號", () => {
     row({ realized_pnl: -1060, realized_pnl_pct: -10.58 });
 

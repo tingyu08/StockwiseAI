@@ -6,7 +6,14 @@ import type { SimOrderView } from "@/hooks/use-simulation";
 import { formatMarketTime } from "@/lib/datetime";
 import { useMarketStore } from "@/stores/market";
 
-const STATUS_LABEL = { pending: "待成交", filled: "已成交", rejected: "已拒絕" } as const;
+// filling 是撮合中的暫態。少了它，卡住的訂單在畫面上會是一片空白，
+// 完全看不出發生什麼事（正式環境曾有兩筆卡了一個月都沒人察覺）。
+const STATUS_LABEL = {
+  pending: "待成交",
+  filling: "撮合中",
+  filled: "已成交",
+  rejected: "已拒絕",
+} as const;
 const MARKET_TZ_LABEL: Record<string, string> = { tw: "台北", us: "紐約" };
 
 const money = (v: number) => v.toLocaleString(undefined, { maximumFractionDigits: 2 });
