@@ -120,7 +120,7 @@ export default function ComparePage() {
                   value={customStart}
                   max={customEnd || undefined}
                   onChange={(e) => setCustomStart(e.target.value)}
-                  className="rounded-md border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+                  className="rounded-md border border-neutral-300 px-2 py-1 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
                 />
                 ~
                 <input
@@ -128,7 +128,7 @@ export default function ComparePage() {
                   value={customEnd}
                   min={customStart || undefined}
                   onChange={(e) => setCustomEnd(e.target.value)}
-                  className="rounded-md border border-neutral-300 px-2 py-1 text-sm dark:border-neutral-700 dark:bg-neutral-900"
+                  className="rounded-md border border-neutral-300 px-2 py-1 text-sm text-neutral-900 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
                 />
               </span>
             )}

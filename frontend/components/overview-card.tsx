@@ -1,7 +1,12 @@
 "use client";
 
 import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
-import { useOverview, useRunOverview, type DailyBriefing } from "@/hooks/use-groups";
+import {
+  useOverview,
+  useRunOverview,
+  type DailyBriefing,
+  type StockFact,
+} from "@/hooks/use-groups";
 import { formatRunTime } from "@/lib/datetime";
 import { ApiError } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
@@ -59,6 +64,7 @@ export function OverviewCard() {
       {data && (
         <BriefingBody
           briefing={data.report}
+          facts={data.stock_facts}
           meta={`${formatRunTime(data.created_at) ?? "尚未執行"} 產生｜${data.model}`}
         />
       )}
@@ -68,7 +74,15 @@ export function OverviewCard() {
   );
 }
 
-function BriefingBody({ briefing, meta }: { briefing: DailyBriefing; meta: string }) {
+function BriefingBody({
+  briefing,
+  facts,
+  meta,
+}: {
+  briefing: DailyBriefing;
+  facts?: Record<string, StockFact>;
+  meta: string;
+}) {
   const b = briefing;
   return (
     <div className="space-y-5 text-sm">
@@ -116,7 +130,9 @@ function BriefingBody({ briefing, meta }: { briefing: DailyBriefing; meta: strin
             <thead>
               <tr className="border-b border-neutral-200 text-left text-neutral-500 dark:border-neutral-800">
                 <th className="py-1.5 pr-3">標的</th>
-                <th className="py-1.5 pr-3">昨日</th>
+                {/* 單位寫在表頭，每一列就不必重複「收盤」二字 */}
+                <th className="py-1.5 pr-3 text-right">昨日收盤</th>
+                <th className="py-1.5 pr-3 text-right">漲跌</th>
                 <th className="py-1.5 pr-3">技術面</th>
                 <th className="py-1.5 pr-3">建議</th>
                 <th className="py-1.5 pr-3 text-right">進場</th>
@@ -127,8 +143,13 @@ function BriefingBody({ briefing, meta }: { briefing: DailyBriefing; meta: strin
             <tbody>
               {b.stock_notes.map((n) => (
                 <tr key={n.symbol} className="border-b border-neutral-100 align-top last:border-0 dark:border-neutral-800/50" title={n.rationale}>
-                  <td className="py-1.5 pr-3 font-mono font-semibold">{n.symbol}</td>
-                  <td className="py-1.5 pr-3 whitespace-nowrap">{n.yesterday}</td>
+                  <td className="py-1.5 pr-3 whitespace-nowrap">
+                    <span className="font-mono font-semibold">{n.symbol}</span>
+                    {facts?.[n.symbol]?.name && (
+                      <span className="ml-1.5 text-neutral-500">{facts[n.symbol].name}</span>
+                    )}
+                  </td>
+                  <Yesterday fact={facts?.[n.symbol]} fallback={n.yesterday} />
                   <td className="py-1.5 pr-3 max-w-56">{n.technical}</td>
                   <td className="py-1.5 pr-3">
                     <span className={`whitespace-nowrap rounded px-1.5 py-0.5 font-semibold ${ACTION_CLS[n.action] ?? ""}`}>
@@ -178,6 +199,41 @@ function BriefingBody({ briefing, meta }: { briefing: DailyBriefing; meta: strin
         指數與 ADR 為系統抓取的真實收盤數據；AI 解讀僅供參考，不構成投資建議。
       </p>
     </div>
+  );
+}
+
+/** 漲跌色：漲紅、跌綠、平盤黃（台股慣例）。
+ *
+ *  這裡刻意不跟著市場切換（持倉表與交易日誌是美股綠漲紅跌）：簡報是給
+ *  人「一眼掃過去」的表格，同一份畫面裡兩套配色比不一致更難讀。
+ */
+function changeClass(pct: number): string {
+  if (pct > 0) return "text-red-500";
+  if (pct < 0) return "text-green-500";
+  return "text-amber-500";
+}
+
+/** 昨日收盤與漲跌兩欄。
+ *
+ *  facts 缺漏時（本欄位上線前產生的舊簡報）退回顯示 AI 那串 yesterday，
+ *  寧可少了顏色也不要空白。
+ */
+function Yesterday({ fact, fallback }: { fact?: StockFact; fallback: string }) {
+  if (!fact || fact.close == null) {
+    return (
+      <td className="py-1.5 pr-3 whitespace-nowrap text-neutral-500" colSpan={2}>
+        {fallback}
+      </td>
+    );
+  }
+  const pct = fact.change_pct;
+  return (
+    <>
+      <td className="py-1.5 pr-3 text-right font-mono">{fact.close}</td>
+      <td className={`py-1.5 pr-3 text-right font-mono ${pct == null ? "text-neutral-400" : changeClass(pct)}`}>
+        {pct == null ? "—" : `${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`}
+      </td>
+    </>
   );
 }
 

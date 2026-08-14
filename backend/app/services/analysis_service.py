@@ -13,7 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import NotFoundError
-from app.models import AiReport, DailyPrice, Indicator, Stock
+from app.models import AiReport, DailyPrice, Indicator, Stock, WatchlistItem
 from app.providers.ai import router as ai_router
 from app.providers.ai.base import AnalysisContext
 from app.providers.ai.gemini import PROMPT_VERSION
@@ -355,8 +355,8 @@ def _format_change(closes: list[float]) -> str:
     return f"收盤 {last}（{(last - prev) / prev * 100:+.2f}%）"
 
 
-def _yesterday_changes(db: Session, stocks: Sequence[Stock]) -> dict[int, str]:
-    """一次撈齊多檔的昨日漲跌（取代逐檔查詢）。
+def _recent_closes(db: Session, stocks: Sequence[Stock]) -> dict[int, list[float]]:
+    """{stock_id: [最新收盤, 前一日收盤]}——一次撈齊多檔（取代逐檔查詢）。
 
     每檔只要最後兩筆收盤，但沒有可攜的 per-group LIMIT；改為一次撈回
     近 14 天的收盤再於 Python 分組——資料量小，且把 N 次往返壓成 1 次。
@@ -381,17 +381,61 @@ def _yesterday_changes(db: Session, stocks: Sequence[Stock]) -> dict[int, str]:
         bucket = by_stock.setdefault(stock_id, [])
         if len(bucket) < 2:  # 已按日期新→舊排序，取前兩筆即可
             bucket.append(float(close))
-    return {stock.id: _format_change(by_stock.get(stock.id, [])) for stock in stocks}
+    return by_stock
 
 
-def overview_dto(overview) -> dict:
-    return {
+def _yesterday_changes(db: Session, stocks: Sequence[Stock]) -> dict[int, str]:
+    """餵給 AI 的昨日漲跌字串。與 stock_facts 共用同一份收盤查詢，
+    兩邊的數字才不會有機會對不起來。"""
+    closes = _recent_closes(db, stocks)
+    return {stock.id: _format_change(closes.get(stock.id, [])) for stock in stocks}
+
+
+def stock_facts(db: Session, market: str) -> dict[str, dict]:
+    """{symbol: {name, close, change_pct}}——簡報標的的名稱與昨收，取自行情資料。
+
+    簡報的 stock_notes.yesterday 是 AI 複述我們餵給它的字串（見 _format_change），
+    要拿來上色就得反過來剖析那串中文，而 AI 隨時可能改寫格式。名稱它更是完全
+    沒有回傳。這些都是系統手上就有的確定資料，直接供給前端比讓 AI 轉一手可靠。
+    """
+    stocks = db.execute(
+        select(Stock)
+        .join(WatchlistItem, WatchlistItem.stock_id == Stock.id)
+        .where(Stock.market == market)
+    ).scalars().all()
+    if not stocks:
+        return {}
+    closes = _recent_closes(db, stocks)
+    facts: dict[str, dict] = {}
+    for stock in stocks:
+        series = closes.get(stock.id) or []
+        fact: dict = {"name": stock.name, "close": None, "change_pct": None}
+        if series:
+            fact["close"] = series[0]
+            if len(series) >= 2 and series[1]:
+                fact["change_pct"] = round(
+                    (series[0] - series[1]) / series[1] * 100, 2
+                )
+        facts[stock.symbol] = fact
+    return facts
+
+
+def overview_dto(overview, db: Session | None = None) -> dict:
+    """db 可選：帶入時附上 stock_facts（名稱與昨收），供前端排版與漲跌上色。
+
+    工作中心的 job result 不需要這些，故不強制——省一次查詢，也避免把
+    行情快照凍結在歷史工作紀錄裡。
+    """
+    dto = {
         "market": overview.market,
         "trade_date": overview.trade_date.isoformat(),
         "model": overview.model,
         "report": json.loads(overview.payload_json),
         "created_at": as_utc_iso(overview.created_at),
     }
+    if db is not None:
+        dto["stock_facts"] = stock_facts(db, overview.market)
+    return dto
 
 
 def report_dto(report: AiReport) -> dict:

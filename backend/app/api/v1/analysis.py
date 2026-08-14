@@ -40,7 +40,7 @@ def get_overview(
     ).scalar_one_or_none()
     if overview is None:
         raise NotFoundError("尚無總評，點「一鍵分析全部自選」產生")
-    return ok(analysis_service.overview_dto(overview))
+    return ok(analysis_service.overview_dto(overview, db))
 
 
 @router.post("/analysis/overview:run", response_model=Envelope)

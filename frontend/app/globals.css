@@ -25,6 +25,18 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* 日期輸入框的日曆圖示是瀏覽器原生繪製的，固定為深色，Tailwind 的
+   dark: 類別碰不到它——深色底上會整個融進背景。反相成淺色才看得見。 */
+@media (prefers-color-scheme: dark) {
+  input[type="date"]::-webkit-calendar-picker-indicator {
+    filter: invert(1);
+    opacity: 0.75;
+  }
+  input[type="date"]::-webkit-calendar-picker-indicator:hover {
+    opacity: 1;
+  }
+}
+
 /* Tailwind v4 preflight 將按鈕游標設為 default，統一改回可點擊手勢 */
 button:not(:disabled),
 [role="button"]:not(:disabled),

@@ -124,11 +124,22 @@ export interface DailyBriefing {
   overall_stance: "bullish" | "neutral" | "bearish";
 }
 
+/** 名稱與昨收由系統直供（見 analysis_service.stock_facts），不取自 AI 的
+ *  yesterday 字串——那要靠剖析中文才拿得到數值，且 AI 隨時可能改寫格式。
+ *  舊簡報（本欄位上線前）不會有這個欄位，前端需自行退回顯示 yesterday。 */
+export interface StockFact {
+  name: string;
+  close: number | null;
+  /** 帶正負號；只有一天歷史時為 null（填 0 會被畫成平盤，等於謊報） */
+  change_pct: number | null;
+}
+
 export interface OverviewData {
   market: string;
   trade_date: string;
   model: string;
   report: DailyBriefing;
+  stock_facts?: Record<string, StockFact>;
   created_at: string | null;
 }
 

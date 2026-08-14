@@ -13,6 +13,7 @@ import {
 } from "recharts";
 
 import { AiManagedPanel } from "@/components/ai-managed-panel";
+import { TOOLTIP_CONTENT_STYLE, TOOLTIP_LABEL_STYLE } from "@/lib/chart-theme";
 import { SimOrderRow } from "@/components/sim-order-row";
 import { FreshnessNote, FRESHNESS } from "@/components/freshness-note";
 import {
@@ -106,7 +107,8 @@ export default function SimulationPage() {
                 tickFormatter={(v) => Number(v).toLocaleString()}
               />
               <Tooltip
-                contentStyle={{ fontSize: 12 }}
+                contentStyle={TOOLTIP_CONTENT_STYLE}
+                labelStyle={TOOLTIP_LABEL_STYLE}
                 formatter={(v) => (typeof v === "number" ? v.toLocaleString() : String(v))}
               />
               <ReferenceLine y={account.initial_cash} stroke="#737373" strokeDasharray="4 4" />
