@@ -7,6 +7,7 @@ import { beforeEach, expect, it, vi } from "vitest";
 
 import { apiGet } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
+import { staleTimeOf } from "./query-test-utils";
 import { DASHBOARD_STALE_MS, useStockDashboard } from "./use-dashboard";
 
 vi.mock("@/lib/api", () => ({ apiGet: vi.fn() }));
@@ -44,10 +45,8 @@ it("loads the complete stock page with one dashboard request", async () => {
     { range: "1y" },
     "tw",
   );
-  const query = queryClient.getQueryCache().find({
-    queryKey: ["stock-dashboard", "tw", "2330", "1y"],
-  });
-  expect(query?.options.staleTime).toBe(DASHBOARD_STALE_MS);
+  expect(staleTimeOf(queryClient, ["stock-dashboard", "tw", "2330", "1y"]))
+    .toBe(DASHBOARD_STALE_MS);
 });
 
 it("separates market and range in the dashboard cache key", async () => {

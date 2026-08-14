@@ -10,6 +10,7 @@ import { useMarketStore } from "@/stores/market";
 import { useAnalysis } from "./use-analysis";
 import { useNews } from "./use-news";
 import { usePredictions } from "./use-premium";
+import { staleTimeOf } from "./query-test-utils";
 import { useWatchlist } from "./use-stocks";
 
 vi.mock("@/lib/api", () => ({
@@ -37,12 +38,8 @@ it("uses query-specific cache durations", async () => {
   }, { wrapper });
 
   await waitFor(() => expect(apiGet).toHaveBeenCalledTimes(4));
-  expect(queryClient.getQueryCache().find({ queryKey: ["watchlist", "tw"] })?.options.staleTime)
-    .toBe(10 * 60_000);
-  expect(queryClient.getQueryCache().find({ queryKey: ["analysis", "tw", "2330"] })?.options.staleTime)
-    .toBe(10 * 60_000);
-  expect(queryClient.getQueryCache().find({ queryKey: ["news", "tw", "2330"] })?.options.staleTime)
-    .toBe(10 * 60_000);
-  expect(queryClient.getQueryCache().find({ queryKey: ["predictions", "tw", "2330"] })?.options.staleTime)
-    .toBe(5 * 60_000);
+  expect(staleTimeOf(queryClient, ["watchlist", "tw"])).toBe(10 * 60_000);
+  expect(staleTimeOf(queryClient, ["analysis", "tw", "2330"])).toBe(10 * 60_000);
+  expect(staleTimeOf(queryClient, ["news", "tw", "2330"])).toBe(10 * 60_000);
+  expect(staleTimeOf(queryClient, ["predictions", "tw", "2330"])).toBe(5 * 60_000);
 });

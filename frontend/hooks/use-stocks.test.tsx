@@ -7,6 +7,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { apiGet, apiRequest, trackActiveJob } from "@/lib/api";
 import { useMarketStore } from "@/stores/market";
+import { staleTimeOf } from "./query-test-utils";
 import {
   useAddWatch,
   usePrices,
@@ -53,9 +54,7 @@ describe("stock queries", () => {
         "tw",
       ),
     );
-    expect(queryClient.getQueryCache().find({
-      queryKey: ["prices", "tw", "2330", "1m"],
-    })?.options.staleTime).toBe(5 * 60_000);
+    expect(staleTimeOf(queryClient, ["prices", "tw", "2330", "1m"])).toBe(5 * 60_000);
   });
 
   it("does not search for blank text and searches non-blank text", async () => {
@@ -83,9 +82,7 @@ describe("stock queries", () => {
     await waitFor(() =>
       expect(apiGet).toHaveBeenCalledWith("/watchlist", {}, "tw"),
     );
-    expect(queryClient.getQueryCache().find({
-      queryKey: ["watchlist", "tw"],
-    })?.options.staleTime).toBe(10 * 60_000);
+    expect(staleTimeOf(queryClient, ["watchlist", "tw"])).toBe(10 * 60_000);
   });
 });
 
