@@ -132,7 +132,6 @@ function BriefingBody({
                 <th className="py-1.5 pr-3">標的</th>
                 {/* 單位寫在表頭，每一列就不必重複「收盤」二字 */}
                 <th className="py-1.5 pr-3 text-right">昨日收盤</th>
-                <th className="py-1.5 pr-3 text-right">漲跌</th>
                 <th className="py-1.5 pr-3">技術面</th>
                 <th className="py-1.5 pr-3">建議</th>
                 <th className="py-1.5 pr-3 text-right">進場</th>
@@ -213,7 +212,11 @@ function changeClass(pct: number): string {
   return "text-amber-500";
 }
 
-/** 昨日收盤與漲跌兩欄。
+/** 昨日收盤（含漲跌）。
+ *
+ *  價格與漲跌同格呈現為「16.61（+4.47%）」：兩者是同一件事的兩種說法，
+ *  拆成兩欄會讓視線在掃描時多跳一次。只有括號內上色——價格本身沒有方向，
+ *  整格著色反而讓表格顯得吵。
  *
  *  facts 缺漏時（本欄位上線前產生的舊簡報）退回顯示 AI 那串 yesterday，
  *  寧可少了顏色也不要空白。
@@ -221,19 +224,19 @@ function changeClass(pct: number): string {
 function Yesterday({ fact, fallback }: { fact?: StockFact; fallback: string }) {
   if (!fact || fact.close == null) {
     return (
-      <td className="py-1.5 pr-3 whitespace-nowrap text-neutral-500" colSpan={2}>
-        {fallback}
-      </td>
+      <td className="py-1.5 pr-3 whitespace-nowrap text-neutral-500">{fallback}</td>
     );
   }
   const pct = fact.change_pct;
   return (
-    <>
-      <td className="py-1.5 pr-3 text-right font-mono">{fact.close}</td>
-      <td className={`py-1.5 pr-3 text-right font-mono ${pct == null ? "text-neutral-400" : changeClass(pct)}`}>
-        {pct == null ? "—" : `${pct > 0 ? "+" : ""}${pct.toFixed(2)}%`}
-      </td>
-    </>
+    <td className="py-1.5 pr-3 text-right font-mono whitespace-nowrap">
+      {fact.close}
+      {pct != null && (
+        <span className={changeClass(pct)}>
+          （{pct > 0 ? "+" : ""}{pct.toFixed(2)}%）
+        </span>
+      )}
+    </td>
   );
 }
 

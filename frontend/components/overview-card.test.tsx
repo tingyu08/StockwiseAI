@@ -117,13 +117,16 @@ describe("核心標的點評", () => {
     expect(within(rowOf("00403A")).getByText("主動統一升級50")).toBeInTheDocument();
   });
 
-  it("表頭寫單位，每一列不再重複「收盤」二字", () => {
+  it("收盤價與漲跌同格呈現，表頭寫單位", () => {
     show(data([note("00403A", "收盤 10.3（+1.98%）")], {
-      "00403A": { name: "主動統一升級50", close: 10.3, change_pct: 1.98 },
+      "00403A": { name: "主動統一升級50", close: 16.61, change_pct: 4.47 },
     }));
 
     expect(screen.getByText("昨日收盤")).toBeInTheDocument();
-    expect(rowOf("00403A")).not.toHaveTextContent("收盤");
+    // 同一格「16.61（+4.47%）」，不拆成兩欄；列內也不再重複「收盤」二字
+    const row = rowOf("00403A");
+    expect(row).toHaveTextContent("16.61（+4.47%）");
+    expect(row).not.toHaveTextContent("收盤");
   });
 
   it("漲紅、跌綠、平盤黃", () => {
@@ -136,19 +139,21 @@ describe("核心標的點評", () => {
       },
     ));
 
-    expect(within(rowOf("UP")).getByText("+1.98%")).toHaveClass("text-red-500");
-    expect(within(rowOf("DOWN")).getByText("-2.50%")).toHaveClass("text-green-500");
-    expect(within(rowOf("FLAT")).getByText("0.00%")).toHaveClass("text-amber-500");
+    // 只有括號內的漲跌上色，價格本身保持中性
+    expect(within(rowOf("UP")).getByText(/\+1\.98%/)).toHaveClass("text-red-500");
+    expect(within(rowOf("DOWN")).getByText(/-2\.50%/)).toHaveClass("text-green-500");
+    expect(within(rowOf("FLAT")).getByText(/0\.00%/)).toHaveClass("text-amber-500");
   });
 
-  it("漲幅未知時顯示破折號，不可畫成平盤", () => {
-    // 只有一天歷史 → change_pct 為 null。塗成黃色等於謊報「今天沒漲跌」
+  it("漲跌未知時只顯示價格，不可畫成平盤", () => {
+    // 只有一天歷史 → change_pct 為 null。塗成黃色 0% 等於謊報「今天沒漲跌」
     show(data([note("NEW", "x")], {
       NEW: { name: "新上市", close: 10, change_pct: null },
     }));
 
-    const dash = within(rowOf("NEW")).getByText("—");
-    expect(dash).not.toHaveClass("text-amber-500");
+    const row = rowOf("NEW");
+    expect(row).toHaveTextContent("10");
+    expect(row).not.toHaveTextContent("%");
   });
 
   it("舊簡報沒有 stock_facts 時退回顯示原字串", () => {
