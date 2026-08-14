@@ -155,12 +155,46 @@ def parse_night_futures(night_quotes: list[dict], day_quotes: list[dict]) -> dic
     }
 
 
+def _quote_digest(quotes: list[dict], suffix: str, limit: int = 3) -> str:
+    """回報實際收到的合約與最新價，供診斷用（截斷，避免把整份報價倒進 log）。"""
+    rows = [
+        f"{q.get('SymbolID')}={q.get('CLastPrice') or '空'}"
+        for q in quotes
+        if (q.get("SymbolID") or "").startswith("TXF")
+        and (q.get("SymbolID") or "").endswith(suffix)
+    ]
+    if not rows:
+        return f"無 {suffix} 合約（共 {len(quotes)} 筆）"
+    shown = ", ".join(rows[:limit])
+    return shown if len(rows) <= limit else f"{shown} …共 {len(rows)} 筆"
+
+
 def _fetch_tw_night_futures() -> dict | None:
+    """夜盤最新價 vs 日盤收盤價。取不到時務必說出原因。
+
+    只在拋例外時記 log 是不夠的：抓得到資料卻解析不出近月合約時會靜默
+    回 None，簡報連日出現「夜盤資料暫缺」而 log 一片乾淨，無從判斷是
+    收盤空窗、IP 被擋還是回應格式變了（2026-08-14 06:55 即是如此，
+    兩次呼叫都 200 OK 卻沒有任何線索）。
+    """
     try:
-        return parse_night_futures(_taifex_quotes("1"), _taifex_quotes("0"))
+        night_quotes = _taifex_quotes("1")
+        day_quotes = _taifex_quotes("0")
     except Exception as exc:
-        logger.warning("TAIFEX 夜盤報價失敗：%s", exc)
+        logger.warning(
+            "TAIFEX 夜盤報價取得失敗（%s）：%s", type(exc).__name__, exc
+        )
         return None
+
+    result = parse_night_futures(night_quotes, day_quotes)
+    if result is None:
+        logger.warning(
+            "TAIFEX 夜盤解析不出近月合約，簡報的夜盤區塊將從缺；"
+            "夜盤[%s]｜日盤[%s]",
+            _quote_digest(night_quotes, "-M"),
+            _quote_digest(day_quotes, "-F"),
+        )
+    return result
 
 
 def parse_futures_positions(rows: list[dict]) -> list[dict] | None:
