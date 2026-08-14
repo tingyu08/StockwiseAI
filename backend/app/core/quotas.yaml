@@ -5,6 +5,13 @@ models:
     rpm: 15
     rpd: 500
     tpm: 250000
+  # ⚠️ 額度尚未於 AI Studio 儀表板核對，暫沿用前代（3.6-flash）的數字。
+  # 設得比實際寬只會讓 Google 回 429，provider 已會退避並降級；
+  # 設得比實際窄則是白白少用。核對後請更新並改掉這行註解。
+  gemini-3.7-flash:
+    rpm: 5
+    rpd: 20
+    tpm: 250000
   gemini-3.6-flash:
     rpm: 5
     rpd: 20

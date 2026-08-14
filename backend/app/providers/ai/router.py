@@ -1,7 +1,7 @@
 """AI 降級鏈 Router。
 
 例行批次（analyze_batch / generate_structured）：僅使用 flash-lite，不設備援
-重要任務（交易決策、每日簡報）：3.6-flash 優先，額度不足自動降級至 flash-lite
+重要任務（交易決策、每日簡報）：3.7-flash 優先 → 3.6-flash → flash-lite
 """
 import logging
 
@@ -17,8 +17,13 @@ logger = logging.getLogger(__name__)
 ROUTINE_CHAIN = ["gemini-3.5-flash-lite"]
 # 品質優先的模型，供交易決策與每日簡報使用（單檔深度分析功能已移除，
 # 故不再叫 DEEP_MODEL）
-PREMIUM_MODEL = "gemini-3.6-flash"
-PREMIUM_CHAIN = [PREMIUM_MODEL, *ROUTINE_CHAIN]
+PREMIUM_MODEL = "gemini-3.7-flash"
+# 前代留作中繼備援，而非直接掉到 flash-lite。3.7 剛推出、供不應求：
+# 2026-08-14 本機連打 6 次全數失敗（4×503、2×讀取逾時 90s），一次都沒成功。
+# 少了這一級，3.7 不可用的期間交易決策會整段掉到 flash-lite，品質反而
+# 比換用 3.7 之前更差。等 3.7 穩定後可把 3.6 從這條鏈移除。
+PREMIUM_FALLBACK_MODEL = "gemini-3.6-flash"
+PREMIUM_CHAIN = [PREMIUM_MODEL, PREMIUM_FALLBACK_MODEL, *ROUTINE_CHAIN]
 
 
 def validate_configured_models() -> None:
