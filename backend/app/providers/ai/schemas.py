@@ -80,6 +80,10 @@ class StockNote(BaseModel):
 
     symbol: str
     yesterday: str  # 昨日表現
+    # 刻意不設長度上限：Gemini 的 responseSchema 不送 maxLength（見 gemini.py），
+    # 上限只能由 Pydantic 事後把關，超過就得多花一次 repair 呼叫——每日簡報
+    # 走 premium 模型（20 RPD），不值得為了版面整齊而燒額度。
+    # 畫面改以「長了就換行」處理（見 overview-card 的技術面欄）。
     technical: str  # 短期技術面判斷
     action: Literal["買進", "持有", "減碼", "觀望"]
     rationale: str

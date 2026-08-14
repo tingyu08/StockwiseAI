@@ -129,18 +129,23 @@ function BriefingBody({
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b border-neutral-200 text-left text-neutral-500 dark:border-neutral-800">
-                {/* 表格是 w-full，若每一欄都只佔內容寬度，多出來的空間會被
-                    平均分掉，標的與價格之間就會空出一大片。讓內容最長的
-                    「技術面」以 w-full 吸收剩餘寬度，其餘欄位 nowrap 縮到
-                    內容大小，各欄才會緊靠。 */}
+                {/* 欄寬策略：技術面是唯一的長文字，放到最後並以 w-full 吸收
+                    剩餘寬度，前面的數字欄才不會被它推擠。中間五欄等寬
+                    （min-w-28 足以容納「106.7（+1.43%）」這種最長內容；
+                    用 min-w 而非 w 是因為 table auto layout 會把 width 當成
+                    建議值、內容短就壓縮，min-width 才真的守得住），
+                    視線掃下來是對齊的。
+                    技術面刻意不設字數上限（見 StockNote.technical）：
+                    長到需要換行就讓它換行，反正它在最後一欄，
+                    換行不會影響前面各欄的對齊。 */}
                 <th className="py-1.5 pr-3 whitespace-nowrap">標的</th>
                 {/* 單位寫在表頭，每一列就不必重複「收盤」二字 */}
-                <th className="py-1.5 pr-3 text-right whitespace-nowrap">昨日收盤</th>
-                <th className="w-full py-1.5 pr-3">技術面</th>
-                <th className="py-1.5 pr-3 whitespace-nowrap">建議</th>
-                <th className="py-1.5 pr-3 text-right whitespace-nowrap">進場</th>
-                <th className="py-1.5 pr-3 text-right whitespace-nowrap">停損</th>
-                <th className="py-1.5 text-right whitespace-nowrap">目標</th>
+                <th className="min-w-28 py-1.5 pr-3 text-right whitespace-nowrap">昨日收盤</th>
+                <th className="min-w-28 py-1.5 pr-3 text-right whitespace-nowrap">建議</th>
+                <th className="min-w-28 py-1.5 pr-3 text-right whitespace-nowrap">進場</th>
+                <th className="min-w-28 py-1.5 pr-3 text-right whitespace-nowrap">停損</th>
+                <th className="min-w-28 py-1.5 pr-3 text-right whitespace-nowrap">目標</th>
+                <th className="w-full py-1.5">技術面</th>
               </tr>
             </thead>
             <tbody>
@@ -153,15 +158,15 @@ function BriefingBody({
                     )}
                   </td>
                   <Yesterday fact={facts?.[n.symbol]} fallback={n.yesterday} />
-                  <td className="w-full py-1.5 pr-3">{n.technical}</td>
-                  <td className="py-1.5 pr-3">
+                  <td className="min-w-28 py-1.5 pr-3 text-right">
                     <span className={`whitespace-nowrap rounded px-1.5 py-0.5 font-semibold ${ACTION_CLS[n.action] ?? ""}`}>
                       {n.action}
                     </span>
                   </td>
-                  <td className="py-1.5 pr-3 text-right font-mono whitespace-nowrap">{n.entry_price}</td>
-                  <td className="py-1.5 pr-3 text-right font-mono whitespace-nowrap">{n.stop_loss}</td>
-                  <td className="py-1.5 text-right font-mono whitespace-nowrap">{n.target_price}</td>
+                  <td className="min-w-28 py-1.5 pr-3 text-right font-mono whitespace-nowrap">{n.entry_price}</td>
+                  <td className="min-w-28 py-1.5 pr-3 text-right font-mono whitespace-nowrap">{n.stop_loss}</td>
+                  <td className="min-w-28 py-1.5 pr-3 text-right font-mono whitespace-nowrap">{n.target_price}</td>
+                  <td className="w-full py-1.5">{n.technical}</td>
                 </tr>
               ))}
             </tbody>
@@ -228,12 +233,12 @@ function changeClass(pct: number): string {
 function Yesterday({ fact, fallback }: { fact?: StockFact; fallback: string }) {
   if (!fact || fact.close == null) {
     return (
-      <td className="py-1.5 pr-3 whitespace-nowrap text-neutral-500">{fallback}</td>
+      <td className="min-w-28 py-1.5 pr-3 whitespace-nowrap text-neutral-500">{fallback}</td>
     );
   }
   const pct = fact.change_pct;
   return (
-    <td className="py-1.5 pr-3 text-right font-mono whitespace-nowrap">
+    <td className="min-w-28 py-1.5 pr-3 text-right font-mono whitespace-nowrap">
       {fact.close}
       {pct != null && (
         <span className={changeClass(pct)}>
