@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 
 import "@testing-library/jest-dom/vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement } from "react";
 import { afterEach, beforeEach, expect, it, describe, vi } from "vitest";
@@ -9,10 +9,11 @@ import { afterEach, beforeEach, expect, it, describe, vi } from "vitest";
 import type { OverviewData } from "@/hooks/use-groups";
 
 const overview = vi.fn();
+const runMutate = vi.fn();
 vi.mock("@/hooks/use-groups", async (importOriginal) => ({
   ...(await importOriginal<object>()),
   useOverview: () => overview(),
-  useRunOverview: () => ({ mutate: vi.fn(), isPending: false, isError: false }),
+  useRunOverview: () => ({ mutate: runMutate, isPending: false, isError: false }),
 }));
 
 const { OverviewCard } = await import("./overview-card");
@@ -40,15 +41,25 @@ const data = (
     stock_facts: facts,
     report: {
       global_market: {
-        index_comments: [], key_stocks_comment: "", one_liner: "",
+        index_comments: ["費半 +2.49%", "那斯達克 +1.1%"],
+        key_stocks_comment: "台積電 ADR +1.68%",
+        one_liner: "風險偏好回升",
         risk_sentiment: "risk_neutral",
       },
       local_market: {
-        support: 1, resistance: 2, levels_rationale: "", flow_comment: "",
-        prediction: "開高走高", prediction_rationales: [],
+        support: 44572,
+        resistance: 46216,
+        levels_rationale: "季線與近 20 日高點",
+        flow_comment: "外資淨空單增加",
+        prediction: "開高走高",
+        prediction_rationales: ["費半領漲", "加權站上 MA20"],
       },
       stock_notes: notes,
-      risks: { events: [], black_swan_watch: [], monitor_signals: [] },
+      risks: {
+        events: ["FOMC 會議紀要"],
+        black_swan_watch: ["地緣政治"],
+        monitor_signals: ["量能是否萎縮"],
+      },
       overall_stance: "neutral",
     },
   }) as OverviewData;
@@ -61,8 +72,41 @@ const show = (d: OverviewData) => {
 
 const rowOf = (symbol: string) => screen.getByText(symbol).closest("tr")!;
 
-beforeEach(() => overview.mockReset());
+beforeEach(() => {
+  overview.mockReset();
+  runMutate.mockReset();
+});
 afterEach(cleanup);
+
+describe("四個模組都要渲染", () => {
+  // 原本只驗了模組 3，其餘三個模組的內容完全沒被斷言過
+  it("全球盤勢、大盤預判、風險提示的內容都出現在畫面上", () => {
+    show(data([note("00403A", "x")], {
+      "00403A": { name: "測試", close: 10, change_pct: 1 },
+    }));
+
+    // 模組 1
+    expect(screen.getByText("費半 +2.49%")).toBeInTheDocument();
+    expect(screen.getByText(/風險偏好回升/)).toBeInTheDocument();
+    // 模組 2
+    expect(screen.getByText("費半領漲")).toBeInTheDocument();
+    expect(screen.getByText("開高走高")).toBeInTheDocument();
+    // 模組 4
+    expect(screen.getByText("FOMC 會議紀要")).toBeInTheDocument();
+    expect(screen.getByText("地緣政治")).toBeInTheDocument();
+    expect(screen.getByText("量能是否萎縮")).toBeInTheDocument();
+  });
+});
+
+describe("產生簡報", () => {
+  it("按下按鈕會觸發重新產生", () => {
+    show(data([note("00403A", "x")]));
+
+    fireEvent.click(screen.getByRole("button", { name: "產生今日簡報" }));
+
+    expect(runMutate).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe("核心標的點評", () => {
   it("顯示公司名稱，不是只有代號", () => {
