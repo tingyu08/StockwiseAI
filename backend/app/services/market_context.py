@@ -124,33 +124,36 @@ def _taifex_quotes(market_type: str) -> list[dict]:
     return (res.json().get("RtData") or {}).get("QuoteList") or []
 
 
-def parse_night_futures(night_quotes: list[dict], day_quotes: list[dict]) -> dict | None:
-    """近月台指期：夜盤最新價 vs 日盤收盤價 → 隔夜台股定價變化。
+def parse_night_futures(night_quotes: list[dict]) -> dict | None:
+    """近月台指期：夜盤最新價 vs 前一交易日結算價 → 隔夜台股定價變化。
 
-    SymbolID 尾碼 -M=夜盤、-F=日盤、-P/-S=現貨；近月＝清單中第一個有成交價的合約。
+    基準價取自夜盤合約自身的 CRefPrice，不另外查日盤：簡報排在 06:55，
+    而台股日盤 09:00 才開盤——那時日盤的 CLastPrice 是空的，拿它當基準
+    永遠算不出結果（正式環境因此連日缺這一段）。CRefPrice 是前一交易日
+    的結算價，正是「隔夜變化」該用的基準，且開盤前後都取得到。
+
+    SymbolID 尾碼 -M＝夜盤、-F＝日盤、-P/-S＝現貨；
+    近月＝清單中第一個有成交價的 -M 合約。
     """
-    def first_traded(quotes: list[dict], suffix: str) -> dict | None:
-        for q in quotes:
-            symbol = q.get("SymbolID") or ""
-            if symbol.startswith("TXF") and symbol.endswith(suffix) and q.get("CLastPrice"):
-                return q
-        return None
-
-    night = first_traded(night_quotes, "-M")
-    day = first_traded(day_quotes, "-F")
-    if night is None or day is None:
+    night = None
+    for quote in night_quotes:
+        symbol = quote.get("SymbolID") or ""
+        if symbol.startswith("TXF") and symbol.endswith("-M") and quote.get("CLastPrice"):
+            night = quote
+            break
+    if night is None:
         return None
     try:
         night_last = float(night["CLastPrice"])
-        day_close = float(day["CLastPrice"])
-    except (TypeError, ValueError):
+        prev_close = float(night["CRefPrice"])
+    except (TypeError, ValueError, KeyError):
         return None
-    if day_close <= 0:
+    if prev_close <= 0:
         return None
     return {
         "night_last": round(night_last, 0),
-        "day_close": round(day_close, 0),
-        "change_pct": round((night_last - day_close) / day_close * 100, 2),
+        "day_close": round(prev_close, 0),
+        "change_pct": round((night_last - prev_close) / prev_close * 100, 2),
         "contract": (night.get("SymbolID") or "").removesuffix("-M"),
     }
 
@@ -170,29 +173,25 @@ def _quote_digest(quotes: list[dict], suffix: str, limit: int = 3) -> str:
 
 
 def _fetch_tw_night_futures() -> dict | None:
-    """夜盤最新價 vs 日盤收盤價。取不到時務必說出原因。
+    """夜盤最新價 vs 前一交易日結算價。取不到時務必說出原因。
 
     只在拋例外時記 log 是不夠的：抓得到資料卻解析不出近月合約時會靜默
     回 None，簡報連日出現「夜盤資料暫缺」而 log 一片乾淨，無從判斷是
-    收盤空窗、IP 被擋還是回應格式變了（2026-08-14 06:55 即是如此，
-    兩次呼叫都 200 OK 卻沒有任何線索）。
+    收盤空窗、IP 被擋還是回應格式變了（2026-08-14 即是如此）。
     """
     try:
         night_quotes = _taifex_quotes("1")
-        day_quotes = _taifex_quotes("0")
     except Exception as exc:
         logger.warning(
             "TAIFEX 夜盤報價取得失敗（%s）：%s", type(exc).__name__, exc
         )
         return None
 
-    result = parse_night_futures(night_quotes, day_quotes)
+    result = parse_night_futures(night_quotes)
     if result is None:
         logger.warning(
-            "TAIFEX 夜盤解析不出近月合約，簡報的夜盤區塊將從缺；"
-            "夜盤[%s]｜日盤[%s]",
+            "TAIFEX 夜盤解析不出近月合約，簡報的夜盤區塊將從缺；夜盤[%s]",
             _quote_digest(night_quotes, "-M"),
-            _quote_digest(day_quotes, "-F"),
         )
     return result
 
