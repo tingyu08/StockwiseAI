@@ -3,6 +3,19 @@
 AI 股票分析與模擬交易。後端 FastAPI（Zeabur）＋前端 Next.js（Vercel）＋Neon PostgreSQL。
 設計文件在 `docs/`（SA/SD/PLAN），**現況以程式碼與本檔為準**。
 
+## 接手時先做這件事
+
+```bash
+git log --oneline -15
+```
+
+commit message 記的是「為什麼這樣改、踩到什麼坑、反轉驗證了什麼」，
+而不只是改了哪些檔案。要接續前一輪的工作、或想知道某個奇怪的寫法
+為何存在，看它比問使用者快，也比翻 docs/ 準（docs/ 會過期）。
+
+需要更細的來龍去脈時，可用 session 搜尋工具找舊對話，但多數情況
+git log ＋ 程式碼註解就夠了。
+
 ## 開發指令
 
 ```bash
