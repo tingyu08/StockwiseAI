@@ -156,6 +156,29 @@ describe("核心標的點評", () => {
     expect(row).not.toHaveTextContent("%");
   });
 
+  it("AI 把名稱寫進 symbol 時仍對得上 stock_facts", () => {
+    // 正式環境實際回傳過 symbol="00407A 主動凱基台灣"，與 facts 的純代號
+    // key 對不起來，整張表因此退回顯示 AI 的原字串、也沒有顏色
+    show(data([note("00407A 主動凱基台灣", "收盤 9.83（+1.76%）")], {
+      "00407A": { name: "主動凱基台灣", close: 9.83, change_pct: 1.76 },
+    }));
+
+    const row = rowOf("00407A");
+    expect(row).toHaveTextContent("9.83（+1.76%）");
+    expect(row).not.toHaveTextContent("收盤");
+    expect(within(row).getByText(/\+1\.76%/)).toHaveClass("text-red-500");
+  });
+
+  it("symbol 帶市場前綴時也對得上", () => {
+    show(data([note("TW/2330", "x")], {
+      "2330": { name: "台積電", close: 2395, change_pct: -1.64 },
+    }));
+
+    const row = rowOf("2330");
+    expect(row).toHaveTextContent("2395（-1.64%）");
+    expect(within(row).getByText("台積電")).toBeInTheDocument();
+  });
+
   it("舊簡報沒有 stock_facts 時退回顯示原字串", () => {
     show(data([note("00403A", "收盤 10.3（+1.98%）")]));
 

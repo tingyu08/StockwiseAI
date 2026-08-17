@@ -152,12 +152,14 @@ function BriefingBody({
               {b.stock_notes.map((n) => (
                 <tr key={n.symbol} className="border-b border-neutral-100 align-top last:border-0 dark:border-neutral-800/50" title={n.rationale}>
                   <td className="py-1.5 pr-3 whitespace-nowrap">
-                    <span className="font-mono font-semibold">{n.symbol}</span>
-                    {facts?.[n.symbol]?.name && (
-                      <span className="ml-1.5 text-neutral-500">{facts[n.symbol].name}</span>
+                    <span className="font-mono font-semibold">{symbolKey(n.symbol)}</span>
+                    {facts?.[symbolKey(n.symbol)]?.name && (
+                      <span className="ml-1.5 text-neutral-500">
+                        {facts[symbolKey(n.symbol)].name}
+                      </span>
                     )}
                   </td>
-                  <Yesterday fact={facts?.[n.symbol]} fallback={n.yesterday} />
+                  <Yesterday fact={facts?.[symbolKey(n.symbol)]} fallback={n.yesterday} />
                   <td className="min-w-28 py-1.5 pr-3 text-right">
                     <span className={`whitespace-nowrap rounded px-1.5 py-0.5 font-semibold ${ACTION_CLS[n.action] ?? ""}`}>
                       {n.action}
@@ -208,6 +210,19 @@ function BriefingBody({
       </p>
     </div>
   );
+}
+
+/** 取出純代號，用來對上 stock_facts 的 key。
+ *
+ *  AI 常把名稱一起寫進 symbol（實際回傳過「00407A 主動凱基台灣」），
+ *  也可能加上市場前綴（「TW/2330」）。prompt 已明令只填代號，但那是
+ *  請求而非保證，且既有簡報已經是這種格式——查找端一律正規化才穩。
+ *  後端 gemini._normalize_symbol 對個股分析做的是同一件事。
+ */
+function symbolKey(raw: string): string {
+  const text = raw.trim().toUpperCase();
+  const afterSlash = text.includes("/") ? text.slice(text.lastIndexOf("/") + 1) : text;
+  return afterSlash.split(/\s+/)[0] ?? afterSlash;
 }
 
 /** 漲跌色：漲紅、跌綠、平盤黃（台股慣例）。
