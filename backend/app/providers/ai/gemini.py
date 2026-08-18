@@ -119,9 +119,17 @@ T = TypeVar("T", bound=BaseModel)
 class GeminiProvider(AIProvider):
     provider_name = "gemini"
 
-    def __init__(self, model: str, db: Session):
+    def __init__(self, model: str, db: Session, *, retry_on_unavailable: bool = True):
+        """retry_on_unavailable=False：503 只送一次就放棄，交由呼叫端降級。
+
+        Google 的 503 會計入 RPD，而 premium 模型每日只有 20 次。鏈上還有
+        備援時，在同一個模型上重試等於把稀缺額度付給對方的過載，而下一級
+        是完全獨立的額度——直接降級既省額度又更快拿到結果。
+        由 router 依「這是不是鏈尾」決定；直接建構時維持重試（預設 True）。
+        """
         self.model_name = model
         self.db = db
+        self._retry_on_unavailable = retry_on_unavailable
 
     async def analyze_batch(self, contexts: list[AnalysisContext]) -> BatchAnalysisResult:
         ensure_quota(self.db, self.model_name)
@@ -575,6 +583,11 @@ class GeminiProvider(AIProvider):
                     len(prompt),
                     elapsed_ms,
                 )
+                if not self._retry_on_unavailable:
+                    raise UpstreamError(
+                        f"{self.model_name} returned 503; falling back "
+                        "instead of retrying (503 counts against RPD)"
+                    )
                 if attempt < max_attempts:
                     delay = _service_unavailable_delay(attempt_index)
                     logger.warning(

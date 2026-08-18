@@ -49,12 +49,25 @@ def _next_step(chain: list[str], index: int) -> str:
     return "falling back to next model" if index + 1 < len(chain) else "no models remaining"
 
 
+def _provider(model: str, db: Session, chain: list[str], index: int) -> GeminiProvider:
+    """鏈尾才在 503 上重試；還有備援的就直接降級。
+
+    Google 的 503 計入 RPD（2026-08-18 確認），premium 模型每日僅 20 次。
+    在 3.7 上重試三次＝一個邏輯呼叫燒掉 15% 當日額度，而 3.7 常態性 503
+    時三次多半全滅。下一級是獨立額度，直接降級才拿得到那份「多的額度」。
+    鏈尾沒得降，維持長退避重試（那是唯一的機會）。
+    """
+    return GeminiProvider(
+        model, db, retry_on_unavailable=index + 1 >= len(chain)
+    )
+
+
 async def analyze_batch(db: Session, contexts: list[AnalysisContext]) -> tuple[BatchAnalysisResult, str]:
     """回傳 (結果, 實際使用的模型)。"""
     last_error: Exception | None = None
     for index, model in enumerate(ROUTINE_CHAIN):
         try:
-            provider = GeminiProvider(model, db)
+            provider = _provider(model, db, ROUTINE_CHAIN, index)
             result = await provider.analyze_batch(contexts)
             return result, model
         except (QuotaExceededError, UpstreamError) as exc:
@@ -76,7 +89,7 @@ async def analyze_trading_batch(
     last_error: Exception | None = None
     for index, model in enumerate(PREMIUM_CHAIN):
         try:
-            provider = GeminiProvider(model, db)
+            provider = _provider(model, db, PREMIUM_CHAIN, index)
             result = await provider.analyze_batch(contexts)
             return result, model
         except (QuotaExceededError, UpstreamError) as exc:
@@ -97,7 +110,7 @@ async def generate_structured(db: Session, prompt: str, output_model):
     last_error: Exception | None = None
     for index, model in enumerate(ROUTINE_CHAIN):
         try:
-            provider = GeminiProvider(model, db)
+            provider = _provider(model, db, ROUTINE_CHAIN, index)
             return await provider.generate(prompt, output_model), model
         except (QuotaExceededError, UpstreamError) as exc:
             logger.warning(
@@ -116,7 +129,7 @@ async def generate_premium_structured(db: Session, prompt: str, output_model):
     last_error: Exception | None = None
     for index, model in enumerate(PREMIUM_CHAIN):
         try:
-            provider = GeminiProvider(model, db)
+            provider = _provider(model, db, PREMIUM_CHAIN, index)
             return await provider.generate(prompt, output_model), model
         except (QuotaExceededError, UpstreamError) as exc:
             logger.warning(

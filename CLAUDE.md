@@ -54,6 +54,10 @@ cd frontend && npx eslint .
 - 交易決策／每日簡報：`gemini-3.7-flash` → `gemini-3.6-flash` → `flash-lite`
   三級降級。3.7 剛推出常 503，保留 3.6 當中繼避免品質直接掉到 lite。
 - 額度定義在 `app/core/quotas.yaml`，啟動時 `validate_configured_models()` 會檢查
+- **503 會計入 RPD**（已向 Google 確認）。premium 每日只有 20 次，所以鏈上還有
+  備援的模型遇到 503 只送一次就降級（`router._provider`）；鏈尾沒得降才重試
+- **Google 的額度日以太平洋時間午夜為界＝台北 15:00**，因此台股晨間批次與前一晚
+  的美股批次算同一天、共用 20 次，台股排在最後最容易被餓死
 
 ## 排程（台北時間，`app/scheduler/jobs.py`）
 

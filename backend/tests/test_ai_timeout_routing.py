@@ -309,7 +309,7 @@ async def test_trading_analysis_prefers_the_premium_model(monkeypatch):
     sentinel = object()
 
     class FakeProvider:
-        def __init__(self, model, db):
+        def __init__(self, model, db, **options):
             used_models.append(model)
 
         async def analyze_batch(self, contexts):
@@ -333,7 +333,7 @@ async def test_daily_briefing_falls_through_the_premium_chain(monkeypatch):
     used_models = []
 
     class FakeProvider:
-        def __init__(self, model, db):
+        def __init__(self, model, db, **options):
             self.model = model
             used_models.append(model)
 
