@@ -473,6 +473,11 @@ class GeminiProvider(AIProvider):
             # Gemini 3.x 以 thinkingLevel 取代 thinkingBudget。實測（2026-07-21）：
             # minimal/low 兩級在 3.6-flash 與 3.5-flash-lite 上都是「零推理」，
             # 真正的推理從 medium 起跳，故分析一律用 high。
+            #
+            # high 在四個模型上都確實生效（2026-09-03 以同一份 prompt 實測
+            # thoughtsTokenCount）：3.8=1678、3.7=1629、3.6=1939、lite=1527，
+            # 推理量約為最終輸出（227~284）的 6 倍。連 lite 都有完整推理——
+            # 降級掉的是模型能力，不是「連思考都沒了」。
             # 配額按請求數計，推理 token 不扣 RPD，代價只有延遲（批次皆為排程執行）。
             "thinkingConfig": {"thinkingLevel": THINKING_LEVEL},
             # 註：temperature/topP/topK 在 Gemini 3.x 已廢棄且被忽略，
@@ -668,7 +673,8 @@ class GeminiProvider(AIProvider):
             raise UpstreamError(f"{self.model_name} 回傳無效 JSON") from exc
         usage = data.get("usageMetadata", {})
         # thoughtsTokenCount 不含在 candidatesTokenCount 內，但 Google 的 TPM
-        # 是以總 token 計；thinkingLevel=high 每次穩定產生數百個推理 token，
+        # 是以總 token 計；thinkingLevel=high 每次穩定產生 1500~1900 個推理
+        # token（2026-09-03 四個模型實測），是最終輸出的數倍——
         # 漏記會讓 ensure_quota 的 TPM 防線長期低估用量。
         output_tokens = usage.get("candidatesTokenCount")
         thoughts = usage.get("thoughtsTokenCount")
