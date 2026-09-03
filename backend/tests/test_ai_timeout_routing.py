@@ -285,19 +285,24 @@ async def test_gemini_timeout_log_contains_render_diagnostics(monkeypatch, caplo
     assert "prompt_chars=6" in combined
     assert "elapsed_ms=" in combined
     assert "status=timeout" in combined
-def test_premium_chain_keeps_a_middle_rung_before_dropping_to_routine():
-    """premium 與例行鏈之間必須留一級，不可讓 premium 掛掉就直接掉到 flash-lite。
+def test_premium_chain_keeps_middle_rungs_before_dropping_to_routine():
+    """premium 與例行鏈之間必須留備援級，不可讓主力掛掉就直接掉到 flash-lite。
 
-    3.7-flash 剛推出、供不應求（2026-08-14 實測連打 6 次全數 503／逾時）。
-    少了前代這一級，3.7 不可用的期間交易決策與每日簡報會整段用 flash-lite，
-    品質反而比換用 3.7 之前更差。等 3.7 穩定後才可拿掉這一級。
+    新發表的 flash 常態性 503：3.7-flash 上線後兩週的正式環境實測是 0/5
+    （2026-08-28），連付費 Priority tier 都拿不到。少了前代這幾級，主力不可用
+    的期間交易決策與每日簡報會整段用 flash-lite，品質反而比換代前更差。
 
-    斷言鎖的是「結構」不是版本號：換代時只要仍維持三級就不會壞。
+    斷言鎖的是「結構」不是版本號：換代時只要仍留有備援級就不會壞。
     """
     assert router.PREMIUM_CHAIN[0] == router.PREMIUM_MODEL
-    assert router.PREMIUM_CHAIN[1] == router.PREMIUM_FALLBACK_MODEL
-    assert router.PREMIUM_FALLBACK_MODEL not in router.ROUTINE_CHAIN
+    assert len(router.PREMIUM_FALLBACK_MODELS) >= 1, "premium 至少要留一級備援"
+    assert router.PREMIUM_CHAIN[1 : 1 + len(router.PREMIUM_FALLBACK_MODELS)] == list(
+        router.PREMIUM_FALLBACK_MODELS
+    )
+    for fallback in router.PREMIUM_FALLBACK_MODELS:
+        assert fallback not in router.ROUTINE_CHAIN
     assert router.PREMIUM_CHAIN[-len(router.ROUTINE_CHAIN):] == router.ROUTINE_CHAIN
+    assert len(set(router.PREMIUM_CHAIN)) == len(router.PREMIUM_CHAIN), "鏈上有重複模型"
 
 
 async def test_trading_analysis_prefers_the_premium_model(monkeypatch):

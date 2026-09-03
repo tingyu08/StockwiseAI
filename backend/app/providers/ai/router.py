@@ -1,7 +1,7 @@
 """AI 降級鏈 Router。
 
 例行批次（analyze_batch / generate_structured）：僅使用 flash-lite，不設備援
-重要任務（交易決策、每日簡報）：3.7-flash 優先 → 3.6-flash → flash-lite
+重要任務（交易決策、每日簡報）：3.8-flash 優先 → 3.7-flash → 3.6-flash → flash-lite
 """
 import logging
 
@@ -17,13 +17,19 @@ logger = logging.getLogger(__name__)
 ROUTINE_CHAIN = ["gemini-3.5-flash-lite"]
 # 品質優先的模型，供交易決策與每日簡報使用（單檔深度分析功能已移除，
 # 故不再叫 DEEP_MODEL）
-PREMIUM_MODEL = "gemini-3.7-flash"
-# 前代留作中繼備援，而非直接掉到 flash-lite。3.7 剛推出、供不應求：
-# 2026-08-14 本機連打 6 次全數失敗（4×503、2×讀取逾時 90s），一次都沒成功。
-# 少了這一級，3.7 不可用的期間交易決策會整段掉到 flash-lite，品質反而
-# 比換用 3.7 之前更差。等 3.7 穩定後可把 3.6 從這條鏈移除。
-PREMIUM_FALLBACK_MODEL = "gemini-3.6-flash"
-PREMIUM_CHAIN = [PREMIUM_MODEL, PREMIUM_FALLBACK_MODEL, *ROUTINE_CHAIN]
+PREMIUM_MODEL = "gemini-3.8-flash"
+# 前兩代都留作中繼備援，而非主力掛掉就直接掉到 flash-lite。
+#
+# 為什麼留兩級：新發表的 flash 會常態性 503（Google 端容量不足，不是我們的
+# 設定問題）。3.7-flash 從 2026-08-14 上線用到 08-28 整整兩週，正式環境實測
+# 0/5 全數 503；同期論壇上連「付費 Tier 2 + Priority tier」的用戶也回報 0%
+# 成功，Google 未曾公告，也沒有對應的官方狀態頁可查。3.8 剛出，極可能重演。
+#
+# 3.6-flash 是同期唯一穩定的（同一批實測 5/5 全中），因此即使 3.8 與 3.7
+# 雙雙 503，仍有一級 premium 品質可用，不會整段掉到 flash-lite。
+# 每一級都是獨立的 20 RPD，且 503 只送一次就降級（見 _provider）。
+PREMIUM_FALLBACK_MODELS = ["gemini-3.7-flash", "gemini-3.6-flash"]
+PREMIUM_CHAIN = [PREMIUM_MODEL, *PREMIUM_FALLBACK_MODELS, *ROUTINE_CHAIN]
 
 
 def validate_configured_models() -> None:

@@ -51,8 +51,13 @@ cd frontend && npx eslint .
 ## AI 模型
 
 - 例行批次／新聞摘要：`gemini-3.5-flash-lite`（500 RPD）
-- 交易決策／每日簡報：`gemini-3.7-flash` → `gemini-3.6-flash` → `flash-lite`
-  三級降級。3.7 剛推出常 503，保留 3.6 當中繼避免品質直接掉到 lite。
+- 交易決策／每日簡報：`gemini-3.8-flash` → `gemini-3.7-flash` → `gemini-3.6-flash`
+  → `flash-lite` 四級降級（2026-08-28 換代）。
+- **新發表的 flash 會常態性 503**，這是 Google 端容量不足，不是設定問題：
+  3.7 從 2026-08-14 用到 08-28 整整兩週，正式環境 0/5 全滅；論壇上連付費
+  Tier 2 + Priority tier 也回報 0%，**升級付費救不了**，Google 也沒有公告
+  （Gemini Developer API 根本沒有官方狀態頁）。同期 3.6 是 5/5 全中，
+  所以備援保留兩級，主力掛掉也不會直接掉到 lite。
 - 額度定義在 `app/core/quotas.yaml`，啟動時 `validate_configured_models()` 會檢查
 - **503 會計入 RPD**（已向 Google 確認）。premium 每日只有 20 次，所以鏈上還有
   備援的模型遇到 503 只送一次就降級（`router._provider`）；鏈尾沒得降才重試

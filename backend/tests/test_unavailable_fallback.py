@@ -1,9 +1,9 @@
 """503 有備援時不在同一個模型上重試。
 
-Google 的 503 會計入 RPD（2026-08-18 由帳號持有人確認），而 3.7-flash 的
+Google 的 503 會計入 RPD（2026-08-18 由帳號持有人確認），而 premium 模型的
 免費額度只有每日 20 次。原本的行為是同一個模型連打 max_attempts 次才降級
-——3.7 剛推出常態性 503（router.py 記錄的實測：連打 6 次、4×503），等於
-每個邏輯呼叫燒掉 3 個 RPD 卻一次都沒成功，額度大半付給了 503。
+——新發表的 flash 常態性 503（3.7-flash 上線兩週的正式環境實測是 0/5），
+等於每個邏輯呼叫燒掉 3 個 RPD 卻一次都沒成功，額度大半付給了 503。
 
 規則：鏈上還有備援的模型，503 就只送一次然後降級（下一級是獨立額度）；
 鏈尾沒得降，維持長退避重試。
@@ -19,7 +19,7 @@ from app.providers.ai.gemini import GeminiProvider
 from app.providers.ai.schemas import AnalysisReport
 from app.models.analysis import AiQuotaReservation, AiUsageLog
 
-MODELS = ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite"]
+MODELS = list(dict.fromkeys(router.PREMIUM_CHAIN))
 
 
 class Tiny(BaseModel):
@@ -84,12 +84,13 @@ def _no_delays(monkeypatch):
 
 async def test_premium_503_falls_back_after_a_single_request(monkeypatch):
     """3.7 回 503 只能扣一次額度——重試兩次是把 15% 的當日額度送給故障。"""
+    head, second = router.PREMIUM_CHAIN[0], router.PREMIUM_CHAIN[1]
     calls: list[str] = []
     _no_delays(monkeypatch)
     monkeypatch.setattr(
         gemini.httpx,
         "AsyncClient",
-        _client_factory(lambda m: 503 if m == "gemini-3.7-flash" else 200, calls),
+        _client_factory(lambda m: 503 if m == head else 200, calls),
     )
 
     db = SessionLocal()
@@ -99,9 +100,9 @@ async def test_premium_503_falls_back_after_a_single_request(monkeypatch):
         db.close()
 
     assert result.ok is True
-    assert model == "gemini-3.6-flash"
-    assert calls.count("gemini-3.7-flash") == 1, (
-        f"3.7 有備援卻重試了 {calls.count('gemini-3.7-flash')} 次：{calls}"
+    assert model == second
+    assert calls.count(head) == 1, (
+        f"{head} 有備援卻重試了 {calls.count(head)} 次：{calls}"
     )
 
 
@@ -136,7 +137,7 @@ async def test_direct_provider_keeps_retrying_by_default(monkeypatch):
     db = SessionLocal()
     try:
         with pytest.raises(UpstreamError):
-            await GeminiProvider("gemini-3.7-flash", db)._call_api(
+            await GeminiProvider(router.PREMIUM_MODEL, db)._call_api(
                 "prompt", AnalysisReport
             )
     finally:
@@ -147,12 +148,13 @@ async def test_direct_provider_keeps_retrying_by_default(monkeypatch):
 
 async def test_single_503_costs_exactly_one_rpd(monkeypatch):
     """503 計入 RPD，所以「送幾次」等於「扣幾次」——用量紀錄要能佐證。"""
+    head = router.PREMIUM_CHAIN[0]
     calls: list[str] = []
     _no_delays(monkeypatch)
     monkeypatch.setattr(
         gemini.httpx,
         "AsyncClient",
-        _client_factory(lambda m: 503 if m == "gemini-3.7-flash" else 200, calls),
+        _client_factory(lambda m: 503 if m == head else 200, calls),
     )
 
     db = SessionLocal()
@@ -160,6 +162,6 @@ async def test_single_503_costs_exactly_one_rpd(monkeypatch):
         await router.generate_premium_structured(db, "prompt", Tiny)
         from app.core.rate_limiter import used_today
 
-        assert used_today(db, "gemini-3.7-flash") == 1
+        assert used_today(db, head) == 1
     finally:
         db.close()
