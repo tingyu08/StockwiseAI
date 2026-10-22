@@ -62,6 +62,7 @@ services:
       BACKEND_DOMAIN: ${BACKEND_DOMAIN:?請在 .env 設定 BACKEND_DOMAIN}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./sites:/etc/caddy/sites:ro
       - caddy_data:/data
       - caddy_config:/config
     depends_on:

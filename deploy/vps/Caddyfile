@@ -4,3 +4,7 @@
 	encode zstd gzip
 	reverse_proxy backend:8000
 }
+
+# 同一台 VPS 上其他專案的站台（例如 Twitch 後端）放在 VPS 的
+# deploy/vps/sites/*.caddy，不進這個 repo。目錄是空的也合法。
+import /etc/caddy/sites/*.caddy
