@@ -87,8 +87,11 @@ cd frontend && npx eslint .
 
 - **正式環境操作**：`ssh -i ~/.ssh/stockwise_vps ubuntu@43.153.138.225`，專案在
   `~/stockwise/deploy/vps`，用 `docker compose logs backend` 看 log（每檔 10MB×5 輪替）。
-  機器上的程式碼是 `git archive` 上傳的，**不是 git clone**，更新要重新上傳再
-  `docker compose up -d --build`。`.env` 只在 VPS 上，密碼與 key 不進版控
+  **push 到 main 會自動部署後端**：CI 通過後 `deploy-backend` 工作用 secret
+  `VPS_DEPLOY_KEY` 把 `git archive` 的 tar 送到 VPS（那把金鑰被 forced command 綁死，
+  只能部署），由 `deploy/vps/deploy.sh` 等執行中的工作結束、換版、健康檢查，
+  失敗自動回滾。只改文件或前端時會略過。目前線上版本記在 VPS 的
+  `~/stockwise/REVISION`。`.env` 只在 VPS 上，密碼與 key 不進版控
 - **CI 的 pip-audit／npm audit 會因「新公布的漏洞」突然變紅**，即使程式碼沒動。
   看清楚是哪個套件、有沒有修正版，修 lockfile 即可，不要關掉這道檢查
 - **依賴指令**（`npm install`、`pip-compile`）會被 guardrail 攔下，需使用者明確授權

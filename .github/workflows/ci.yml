@@ -88,3 +88,54 @@ jobs:
       - uses: actions/checkout@v4
       - run: docker build -t stockwise-backend ./backend
       - run: docker build -t stockwise-frontend ./frontend
+
+  # 後端自動部署到 VPS（前端由 Vercel 自己部署）。只有 main 的 push、
+  # 且後端測試與映像建置都通過才會跑；VPS 端的流程見 deploy/vps/deploy.sh。
+  deploy-backend:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [backend, containers]
+    runs-on: ubuntu-latest
+    timeout-minutes: 40   # VPS 端最多等執行中的工作 20 分鐘，再加建置時間
+    concurrency:
+      group: deploy-vps
+      cancel-in-progress: false
+    env:
+      VPS_HOST: 43.153.138.225
+      # 主機公鑰不是機密；寫死在這裡，主機被換掉時連線會直接失敗而不是誤連
+      VPS_HOST_KEY: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAm6Dhi+IKA6ZvewA77kUEDGj0htx4Aq4bH/CNz/+Exn
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      # 只改文件或前端時不必重啟後端（重啟會讓排程中的工作多等一輪）
+      - name: Detect backend changes
+        id: changes
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$BEFORE" "$GITHUB_SHA" -- backend deploy/vps; then
+            echo "backend/ 與 deploy/vps/ 沒有變更，略過部署"
+            echo "deploy=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Deploy to VPS
+        if: steps.changes.outputs.deploy == 'true'
+        env:
+          DEPLOY_KEY: ${{ secrets.VPS_DEPLOY_KEY }}
+        run: |
+          if [ -z "$DEPLOY_KEY" ]; then
+            echo "::error::未設定 repo secret VPS_DEPLOY_KEY，無法部署"
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "$VPS_HOST $VPS_HOST_KEY" > ~/.ssh/known_hosts
+          echo "$GITHUB_SHA" > REVISION
+          # 這把金鑰在 VPS 上被 forced command 綁死，只能把 tar 交給
+          # deploy_entry.sh，不能執行任意指令
+          git archive --format=tar --add-file=REVISION HEAD backend deploy/vps \
+            | ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=yes ubuntu@"$VPS_HOST"

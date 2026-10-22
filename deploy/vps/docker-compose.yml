@@ -31,6 +31,8 @@ services:
 
   backend:
     build: ../../backend
+    # 固定映像名稱：deploy.sh 靠 :latest／:previous 兩個 tag 做回滾
+    image: stockwise-backend:latest
     env_file: .env
     environment:
       ENVIRONMENT: production

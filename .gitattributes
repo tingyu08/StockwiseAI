@@ -1,0 +1,4 @@
+# shell 腳本會在 Linux 上執行（VPS 部署、CI），一律 LF。
+# 否則在 Windows（core.autocrlf=true）上 checkout 或 git archive 會轉成 CRLF，
+# `set -eu` 會變成 `set -eu\r` 而報 Illegal option，部署腳本直接失效。
+*.sh text eol=lf
