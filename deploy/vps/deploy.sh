@@ -19,7 +19,7 @@ IMAGE=stockwise-backend
 WAIT_SECONDS=${DEPLOY_WAIT_SECONDS:-1200}
 HEALTH_SECONDS=${DEPLOY_HEALTH_SECONDS:-90}
 # deploy/vps 底下要隨 release 更新的檔案；.env 只存在 VPS 上，絕不覆蓋
-DEPLOY_FILES="docker-compose.yml Caddyfile deploy.sh deploy_entry.sh check_sources.sh count_rows.sql MIGRATION.md .env.example"
+DEPLOY_FILES="docker-compose.yml Caddyfile deploy.sh deploy_entry.sh backup_export.sh backup-cert.pem check_sources.sh count_rows.sql MIGRATION.md .env.example"
 
 log() { echo "[deploy $(date -u +%H:%M:%S)] $*"; }
 
@@ -91,6 +91,7 @@ main() {
         fi
     done
     install -D -m 755 "$RELEASE/deploy/vps/deploy_entry.sh" "$HOME/bin/stockwise-deploy-entry"
+    install -D -m 755 "$RELEASE/deploy/vps/backup_export.sh" "$HOME/bin/stockwise-backup-export"
     cd "$VPS_DIR"
 
     rm -rf "$APP/backend.prev"
