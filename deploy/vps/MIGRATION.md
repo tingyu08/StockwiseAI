@@ -62,7 +62,30 @@ npx zeabur@latest service list --project-id <projectID>   # 記下 backend 與 p
 
 > **ARM 機器（如 Oracle Cloud A1）也可以**：postgres:17、caddy:2、python:3.12-slim
 > 都有 arm64 映像，`requirements.lock` 是 `pip-compile --generate-hashes` 產生的，
-> 含各平台 wheel 的雜湊。直接在那台機器上 `docker compose build` 即可。
+> 含各平台 wheel 的雜湊。直接在那台機器上 `docker compose build` 即可
+> （2026-10-22 已在本機以 `--platform linux/arm64` 建置並載入 app 驗證）。
+
+### Oracle Cloud 額外要做的事
+
+- **防火牆有兩層，都要開 80／443**：
+  1. 雲端那層：VCN → Security List → Ingress Rules 加 TCP 80、TCP 443、UDP 443（來源 `0.0.0.0/0`）
+  2. 機器那層：Oracle 的 Ubuntu 映像內建 iptables 規則，除了 SSH 全部 REJECT。
+     **不要再開 ufw**（會跟它打架），改成在 REJECT 前插入規則並存檔：
+
+     ```bash
+     sudo iptables -I INPUT 5 -p tcp -m multiport --dports 80,443 -m state --state NEW -j ACCEPT
+     sudo iptables -I INPUT 5 -p udp --dport 443 -j ACCEPT
+     sudo netfilter-persistent save
+     ```
+
+  只開了其中一層的症狀：Caddy 申請憑證逾時、`curl https://<網域>` 連不上
+- **閒置回收**：Oracle 把「7 天內 CPU、網路、記憶體（A1）都低於 20%」的免費機視為
+  閒置並可能收回。本專案實測只用約 400 MB 記憶體、CPU 大多閒著，**一定會落入
+  這個條件**。有來源說升級成 Pay As You Go 帳號（在免費額度內仍是 $0）就不適用，
+  但未經證實；升級後記得設預算警示，避免不小心開到收費規格
+- **開不出機器（Out of host capacity）**：換另一個 Availability Domain，或隔幾小時
+  再試。主區域註冊後不能改
+- SSH 金鑰在建立機器時下載，**私鑰只給一次**，弄丟就進不去
 
 ## 2. 匯出 Zeabur 上的東西
 
@@ -153,7 +176,15 @@ docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -At'
 diff ~/zeabur.txt ~/new.txt && echo 一致
 ```
 
-DNS：在你的網域加一筆 A 記錄 `BACKEND_DOMAIN → VPS 的 IP`（改 DNS 前把 TTL 降到 300）。
+DNS：讓 `BACKEND_DOMAIN` 指到 VPS 的 IP。
+
+- **沒有自己的網域 → 用 DuckDNS（免費）**：到 https://www.duckdns.org 用 GitHub／Google
+  登入，建一個子網域（例：`stockwise-api`），在 `current ip` 填 VPS 的 IP 按 update。
+  `.env` 設 `BACKEND_DOMAIN=stockwise-api.duckdns.org`。VPS 是固定 IP，不需要裝
+  DuckDNS 的 IP 自動更新程式；duckdns.org 在 Public Suffix List 上，Let's Encrypt
+  的申請額度按子網域計，不會被別人用光
+- **有自己的網域**：加一筆 A 記錄（改 DNS 前把 TTL 降到 300）
+
 生效後 Caddy 會自動拿憑證：
 
 ```bash
