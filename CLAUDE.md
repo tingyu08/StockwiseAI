@@ -1,8 +1,9 @@
 # StockwiseAI — 給 Claude 的專案須知
 
-AI 股票分析與模擬交易。後端 FastAPI ＋ PostgreSQL 17 同機（Zeabur 東京專屬伺服器）
-＋前端 Next.js（Vercel）。Neon 只是異地備援目標，不是正式資料庫。
-**Zeabur 2026 年底停運**，搬到自架 VPS 的設定與步驟在 `deploy/vps/`（見 `MIGRATION.md`）。
+AI 股票分析與模擬交易。後端 FastAPI ＋ PostgreSQL 17 ＋ Caddy 同機（騰訊雲 Lighthouse
+東京 VPS，`deploy/vps/docker-compose.yml`，網域 `stockwise-api-nyanko.duckdns.org`）
+＋前端 Next.js（Vercel，`BACKEND_API_BASE` 指向後端）。2026-10-22 從停運中的 Zeabur
+搬過來，過程與回滾方式見 `deploy/vps/MIGRATION.md`。Neon 只是異地備援目標。
 設計文件在 `docs/`（SA/SD/PLAN），**現況以程式碼與本檔為準**。
 
 ## 接手時先做這件事
@@ -89,8 +90,12 @@ cd frontend && npx eslint .
 
 ## 已知的環境特性
 
-- **Zeabur log 的紅色 ERROR 可能只是 Python 的 WARNING**（severity 看 stderr 判定）。
-  判讀看訊息前綴，不要看色塊。免費方案 log 只留約一天，`Search Logs` 是付費功能。
+- **正式環境操作**：`ssh -i ~/.ssh/stockwise_vps ubuntu@43.153.138.225`，專案在
+  `~/stockwise/deploy/vps`，用 `docker compose logs backend` 看 log（每檔 10MB×5 輪替）。
+  機器上的程式碼是 `git archive` 上傳的，**不是 git clone**，更新要重新上傳再
+  `docker compose up -d --build`。`.env` 只在 VPS 上，密碼與 key 不進版控
+- **CI 的 pip-audit／npm audit 會因「新公布的漏洞」突然變紅**，即使程式碼沒動。
+  看清楚是哪個套件、有沒有修正版，修 lockfile 即可，不要關掉這道檢查
 - **依賴指令**（`npm install`、`pip-compile`）會被 guardrail 攔下，需使用者明確授權
 - 前端覆蓋率門檻刻意訂在實際值附近（`vitest.config.ts` 有說明），是「防止退步的
   地板」而非品質目標。統計範圍涵蓋全部原始碼，補測試永遠是加分
