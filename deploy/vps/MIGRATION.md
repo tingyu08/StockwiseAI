@@ -103,19 +103,23 @@ docker run --rm -e PGPASSWORD postgres:17 \
 unset PGPASSWORD
 ```
 
-**方法 B：沒有公開連接埠時，經 `service exec` 串流出來**
+**方法 B：沒有公開連接埠時，經 `service exec` 串流出來**（本專案實際用的方法，
+2026-10-22 實測可行；postgresql 服務 ID `6a5f19b54d439e41ee4d0089`）
 
 ```bash
-timeout 900 npx zeabur@latest service exec --id <postgresServiceID> -- \
-  sh -c 'pg_dump -h 127.0.0.1 -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" | base64 -w0' \
+timeout 900 npx zeabur@latest service exec --id <postgresServiceID> -i=false -- \
+  sh -c 'export PGPASSWORD="$POSTGRES_PASSWORD"; pg_dump -w -h 127.0.0.1 -U "$POSTGRES_USER" -Fc "$POSTGRES_DB" </dev/null | base64 -w0; echo' \
   > ~/zeabur.dump.b64
 # CLI 可能混入 log 行，只留 base64 內容再解碼
 grep -E '^[A-Za-z0-9+/=]+$' ~/zeabur.dump.b64 | base64 -d > ~/zeabur.dump
 ```
 
-- 容器內要連 `127.0.0.1`，不要用 `localhost`（指南回報過 `-h localhost` 會卡住）
-- `POSTGRES_USER`／`POSTGRES_DB` 換成 `variable list --id <postgresServiceID>` 裡實際的變數名
-- `service exec` 偶爾回 504，失敗就重跑；確切參數以 `npx zeabur@latest service exec --help` 為準
+- **`</dev/null` 不能省**：`service exec` 的 stdin 一直開著，psql／pg_dump 會卡住
+  直到 Zeabur 回 504。`PGPASSWORD`＋`-w` 則避免它停下來等密碼輸入
+- 這兩個坑看起來都像「504 Gateway Timeout」，但 `echo hi` 這種指令卻正常——
+  遇到 504 先懷疑指令在等輸入，不一定是 Zeabur 不穩
+- Zeabur 上的資料庫名稱是 `zeabur`（不是 stockwise）；還原時 `-d` 指新庫即可，名稱不必相同
+- 20 MB 的庫 dump 後約 2.5 MB，一次就串流完成
 
 **兩種方法都要驗證檔案是好的：**
 
