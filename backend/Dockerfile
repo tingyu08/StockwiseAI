@@ -11,7 +11,11 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir --require-hashes -r requirements.lock \
     && addgroup --system app \
-    && adduser --system --ingroup app app
+    && adduser --system --ingroup app app \
+    # 備份目錄預先建好並交給 app：named volume 首次建立時會沿用映像檔內
+    # 的擁有者，否則掛上去是 root 所有，非 root 的 pg_dump 寫不進去
+    && mkdir -p /data/backups \
+    && chown -R app:app /data
 
 COPY --chown=app:app app ./app
 COPY --chown=app:app alembic ./alembic

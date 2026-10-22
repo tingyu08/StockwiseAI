@@ -1,6 +1,8 @@
 # StockwiseAI — 給 Claude 的專案須知
 
-AI 股票分析與模擬交易。後端 FastAPI（Zeabur）＋前端 Next.js（Vercel）＋Neon PostgreSQL。
+AI 股票分析與模擬交易。後端 FastAPI ＋ PostgreSQL 17 同機（Zeabur 東京專屬伺服器）
+＋前端 Next.js（Vercel）。Neon 只是異地備援目標，不是正式資料庫。
+**Zeabur 2026 年底停運**，搬到自架 VPS 的設定與步驟在 `deploy/vps/`（見 `MIGRATION.md`）。
 設計文件在 `docs/`（SA/SD/PLAN），**現況以程式碼與本檔為準**。
 
 ## 接手時先做這件事

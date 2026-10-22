@@ -1,0 +1,6 @@
+# BACKEND_DOMAIN 的 DNS A 記錄指到這台 VPS 後，Caddy 會自動申請並續期憑證。
+# 會自帶 X-Forwarded-For，後端 TRUSTED_PROXY_IPS=private 即可辨識真實訪客 IP。
+{$BACKEND_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy backend:8000
+}

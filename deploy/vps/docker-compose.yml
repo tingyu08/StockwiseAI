@@ -1,0 +1,74 @@
+# 單台 VPS 正式環境：PostgreSQL 17 ＋ 後端 ＋ Caddy（自動 HTTPS）。
+# 取代 Zeabur 方案 C（2026 年底停運），前端維持 Vercel。
+# 用法與搬遷步驟見同目錄 MIGRATION.md；變數範本見 .env.example。
+#
+# 只有 Caddy 對外開 80/443；db 與 backend 不發布任何 port，只在 compose
+# 內網互通——Docker 發布的 port 會繞過 ufw，少開一個就少一個破口。
+
+x-logging: &default-logging
+  # 預設 json-file 不輪替，log 會慢慢吃光 60GB 碟
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+services:
+  db:
+    image: postgres:17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?請在 .env 設定 POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?請在 .env 設定 POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:?請在 .env 設定 POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+    logging: *default-logging
+
+  backend:
+    build: ../../backend
+    env_file: .env
+    environment:
+      ENVIRONMENT: production
+      # 密碼請用 openssl rand -hex 24 產生：hex 不含 @ : / 等需要 URL 編碼的字元
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      # 預設 external＝只跑出場哨兵，不跑 AI 批次／簡報／委託／備份。新機演練期間
+      # 若與 Zeabur 同時跑 internal，兩邊會各自產生委託、重複吃掉 premium 每日
+      # 20 次額度。切換當下才改 internal。
+      SCHEDULER_MODE: ${SCHEDULER_MODE:-external}
+      BACKUP_DIR: /data/backups
+      TZ: UTC
+    volumes:
+      - backups:/data
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    logging: *default-logging
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      BACKEND_DOMAIN: ${BACKEND_DOMAIN:?請在 .env 設定 BACKEND_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - backend
+    restart: unless-stopped
+    logging: *default-logging
+
+volumes:
+  pgdata:
+  backups:
+  caddy_data:   # 憑證存這裡，刪掉會重新申請（Let's Encrypt 有頻率上限）
+  caddy_config:
