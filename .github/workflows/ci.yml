@@ -4,9 +4,13 @@ on:
   push:
     branches: [main]
   pull_request:
+  # 手動重新部署：Actions → ci → Run workflow（main）
+  workflow_dispatch:
 
 permissions:
   contents: read
+  # 部署的變更偵測要查過去的 run 是否真的部署過
+  actions: read
 
 jobs:
   backend:
@@ -92,7 +96,7 @@ jobs:
   # 後端自動部署到 VPS（前端由 Vercel 自己部署）。只有 main 的 push、
   # 且後端測試與映像建置都通過才會跑；VPS 端的流程見 deploy/vps/deploy.sh。
   deploy-backend:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
     needs: [backend, containers]
     runs-on: ubuntu-latest
     timeout-minutes: 40   # VPS 端最多等執行中的工作 20 分鐘，再加建置時間
@@ -107,18 +111,46 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      # 只改文件或前端時不必重啟後端（重啟會讓排程中的工作多等一輪）
+      # 只改文件或前端時不必重啟後端（重啟會讓排程中的工作多等一輪）。
+      # 比較基準是「上一次真的部署成功的版本」，不是上一次 push：CI 失敗的 push 不會部署，
+      # 若只跟上一次 push 比，那些 push 裡的後端變更會在下一次只改文件的 push 被當成
+      # 「沒變更」而永遠不上線，job 還照樣顯示成功（同機的 Twitch 專案實際踩過）
       - name: Detect backend changes
         id: changes
         env:
-          BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
         run: |
-          if ! git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "手動觸發，直接部署"
             echo "deploy=true" >> "$GITHUB_OUTPUT"
-          elif git diff --quiet "$BEFORE" "$GITHUB_SHA" -- backend deploy/vps; then
-            echo "backend/ 與 deploy/vps/ 沒有變更，略過部署"
+            exit 0
+          fi
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY"
+          auth="Authorization: Bearer $GH_TOKEN"
+          base=""
+          runs=$(curl -fsSL -H "$auth" "$api/actions/workflows/ci.yml/runs?branch=main&status=success&per_page=30" \
+            | jq -r '.workflow_runs[] | "\(.id) \(.head_sha)"') || runs=""
+          # 只看 run 或 job 成功不夠：沒有後端變更時 job 成功但部署步驟是 skipped
+          while read -r run_id sha; do
+            [ -n "$run_id" ] || continue
+            deployed=$(curl -fsSL -H "$auth" "$api/actions/runs/$run_id/jobs" \
+              | jq '[.jobs[] | select(.name == "deploy-backend") | .steps[]
+                     | select(.name == "Deploy to VPS" and .conclusion == "success")] | length') || deployed=0
+            if [ "${deployed:-0}" -gt 0 ]; then
+              base=$sha
+              break
+            fi
+          done <<EOF
+          $runs
+          EOF
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            echo "找不到上一次成功部署的版本，部署"
+            echo "deploy=true" >> "$GITHUB_OUTPUT"
+          elif git diff --quiet "$base" "$GITHUB_SHA" -- backend deploy/vps; then
+            echo "自上次部署（$base）以來 backend/ 與 deploy/vps/ 沒有變更，略過部署"
             echo "deploy=false" >> "$GITHUB_OUTPUT"
           else
+            echo "自上次部署（$base）以來有後端變更，部署"
             echo "deploy=true" >> "$GITHUB_OUTPUT"
           fi
       - name: Deploy to VPS
